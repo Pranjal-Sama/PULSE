@@ -2,85 +2,409 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import pickle
+import shap
+import sqlite3
+import os
 from datetime import datetime
+from fpdf import FPDF
 
 # ==========================================
 # 🟢 1. PAGE CONFIG & CUSTOM CSS
 # ==========================================
 st.set_page_config(
-    page_title="PULSE | Cardiovascular Risk",
-    page_icon="❤️",
+    page_title="PULSE | Health Evaluation",
+    page_icon="⚕️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 st.markdown("""
     <style>
+    /* ===== GLOBAL STYLING ===== */
+    * {
+        margin: 0;
+        padding: 0;
+    }
+    
+    body {
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        color: #e2e8f0;
+    }
+    
+    /* ===== SIDEBAR STYLING ===== */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0f172a 0%, #1a2744 100%);
+        padding: 30px 20px;
+    }
+    
+    [data-testid="stSidebar"] [data-testid="stImage"] {
+        border-radius: 50%;
+        padding: 10px;
+        background: rgba(0, 212, 255, 0.15);
+        border: 2px solid rgba(0, 212, 255, 0.3);
+    }
+    
+    [data-testid="stSidebar"] .css-1d391kg {
+        color: #e0f2fe !important;
+    }
+    
+    /* ===== BUTTON STYLING ===== */
     .stButton>button { 
         width: 100%; 
-        border-radius: 8px; 
+        border-radius: 12px; 
         height: 3.2em; 
-        background: linear-gradient(90deg, #ff4b4b, #ff6b6b); 
-        color: white; 
-        font-weight: bold;
-        box-shadow: 0 4px 12px rgba(255,75,75,0.3);
-        border: none;
+        background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%);
+        color: #0f172a; 
+        font-weight: 700;
+        font-size: 16px;
+        box-shadow: 0 8px 20px rgba(0, 212, 255, 0.4);
+        border: 2px solid #00d4ff;
+        transition: all 0.3s ease;
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
     }
-    .stButton>button:hover { background: linear-gradient(90deg, #ff6b6b, #ff4b4b); }
-    .risk-low { color: #00CC66; font-size: 28px; font-weight: 800; text-align: center; }
-    .risk-med { color: #FFB300; font-size: 28px; font-weight: 800; text-align: center; }
-    .risk-high { color: #FF3333; font-size: 28px; font-weight: 800; text-align: center; }
-    .pulse-header { animation: pulse 2s infinite; }
-    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.7; } 100% { opacity: 1; } }
+    
+    .stButton>button:hover { 
+        background: linear-gradient(135deg, #00ffff 0%, #00ccff 100%);
+        box-shadow: 0 12px 40px rgba(0, 212, 255, 0.6);
+        transform: translateY(-3px);
+        color: #0f172a;
+    }
+    
+    .stButton>button:active {
+        transform: translateY(-1px);
+    }
+    
+    /* ===== RISK LEVEL STYLING ===== */
+    .risk-low { 
+        color: #4ade80; 
+        font-size: 32px; 
+        font-weight: 900; 
+        text-align: center;
+        text-shadow: 0 0 20px rgba(74, 222, 128, 0.4);
+        animation: pulse-glow 2s ease-in-out infinite;
+    }
+    
+    .risk-med { 
+        color: #fbbf24; 
+        font-size: 32px; 
+        font-weight: 900; 
+        text-align: center;
+        text-shadow: 0 0 20px rgba(251, 191, 36, 0.4);
+        animation: pulse-glow 2s ease-in-out infinite;
+    }
+    
+    .risk-high { 
+        color: #ff6b6b; 
+        font-size: 32px; 
+        font-weight: 900; 
+        text-align: center;
+        text-shadow: 0 0 20px rgba(255, 107, 107, 0.5);
+        animation: pulse-glow 2s ease-in-out infinite;
+    }
+    
+    @keyframes pulse-glow {
+        0%, 100% { 
+            transform: scale(1);
+        }
+        50% { 
+            transform: scale(1.05);
+        }
+    }
+    
+    /* ===== ALERT BOX STYLING ===== */
+    .alert-box { 
+        background: linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%);
+        padding: 18px 20px; 
+        border-left: 6px solid #ff6b6b;
+        border-radius: 10px; 
+        margin-bottom: 20px;
+        box-shadow: 0 8px 24px rgba(255, 107, 107, 0.25);
+        font-weight: 600;
+        color: #fecaca;
+        border: 1px solid rgba(255, 107, 107, 0.4);
+    }
+    
+    /* ===== FORM STYLING ===== */
+    .stForm {
+        background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+        padding: 30px;
+        border-radius: 20px;
+        box-shadow: 0 12px 40px rgba(0, 212, 255, 0.15);
+        border: 2px solid rgba(0, 212, 255, 0.3);
+    }
+    
+    /* ===== INPUT STYLING ===== */
+    .stTextInput>div>div>input,
+    .stNumberInput>div>div>input,
+    .stSelectbox>div>div>select {
+        background-color: #0f172a !important;
+        color: #e2e8f0 !important;
+        border: 2px solid #00d4ff !important;
+        border-radius: 10px !important;
+        padding: 12px !important;
+        font-size: 15px !important;
+        transition: all 0.3s ease !important;
+    }
+    
+    .stTextInput>div>div>input:focus,
+    .stNumberInput>div>div>input:focus,
+    .stSelectbox>div>div>select:focus {
+        border-color: #00ffff !important;
+        box-shadow: 0 0 20px rgba(0, 255, 255, 0.4) !important;
+        background-color: #1a2744 !important;
+        color: #e2e8f0 !important;
+    }
+    
+    /* ===== METRIC CARDS ===== */
+    [data-testid="metric-container"] {
+        background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+        border: 2px solid #00d4ff;
+        padding: 20px;
+        border-radius: 15px;
+        box-shadow: 0 10px 30px rgba(0, 212, 255, 0.2);
+    }
+    
+    /* ===== EXPANDER STYLING ===== */
+    .streamlit-expanderHeader {
+        background: linear-gradient(135deg, #0099cc 0%, #00d4ff 100%);
+        color: #0f172a !important;
+        border-radius: 10px;
+        font-weight: 700;
+        padding: 15px;
+        margin-bottom: 10px;
+    }
+    
+    .streamlit-expanderContent {
+        background: linear-gradient(135deg, #1a2744 0%, #0f172a 100%);
+        border: 1px solid rgba(0, 212, 255, 0.3);
+        border-radius: 10px;
+        padding: 15px;
+        color: #e2e8f0;
+    }
+    
+    /* ===== HEADING STYLING ===== */
+    h1, h2, h3, h4, h5, h6 {
+        color: #e0f2fe !important;
+        font-weight: 700 !important;
+        margin-top: 20px !important;
+        margin-bottom: 15px !important;
+    }
+    
+    h1 {
+        font-size: 2.5em !important;
+        color: #00ffff !important;
+        text-shadow: 0 0 20px rgba(0, 212, 255, 0.3) !important;
+    }
+    
+    h2 {
+        font-size: 1.8em !important;
+        border-bottom: 3px solid #00d4ff;
+        padding-bottom: 10px;
+        color: #e0f2fe !important;
+    }
+    
+    h3 {
+        color: #00ffff !important;
+    }
+    
+    h4 {
+        color: #e0f2fe !important;
+    }
+    
+    p {
+        color: #cbd5e1 !important;
+    }
+    
+    /* ===== INFO BOX STYLING ===== */
+    .stInfo, .stSuccess, .stWarning, .stError {
+        border-radius: 12px !important;
+        padding: 18px !important;
+        font-weight: 500 !important;
+        border-left: 6px solid !important;
+    }
+    
+    .stInfo {
+        background: linear-gradient(135deg, #0c4a6e 0%, #082f4f 100%) !important;
+        border-left-color: #00d4ff !important;
+        color: #e0f2fe !important;
+    }
+    
+    .stSuccess {
+        background: linear-gradient(135deg, #134e4a 0%, #0d3830 100%) !important;
+        border-left-color: #4ade80 !important;
+        color: #d1fae5 !important;
+    }
+    
+    .stWarning {
+        background: linear-gradient(135deg, #78350f 0%, #451a03 100%) !important;
+        border-left-color: #fbbf24 !important;
+        color: #fef3c7 !important;
+    }
+    
+    .stError {
+        background: linear-gradient(135deg, #7f1d1d 0%, #4c0519 100%) !important;
+        border-left-color: #ff6b6b !important;
+        color: #fecaca !important;
+    }
+    
+    /* ===== PROGRESS BAR ===== */
+    .stProgress>div>div>div {
+        background: linear-gradient(90deg, #4ade80 0%, #00d4ff 100%) !important;
+        border-radius: 10px !important;
+    }
+    
+    /* ===== DIVIDER ===== */
+    hr {
+        border: 0;
+        height: 2px;
+        background: linear-gradient(90deg, #0099cc 0%, #00d4ff 50%, #0099cc 100%);
+        margin: 30px 0;
+    }
+    
+    /* ===== DATAFRAME STYLING ===== */
+    .streamlit-table {
+        border-radius: 10px;
+        overflow: hidden;
+        color: #cbd5e1 !important;
+    }
+    
+    .streamlit-table tr:hover {
+        background-color: rgba(0, 212, 255, 0.1) !important;
+    }
+    
+    /* ===== CUSTOM GRADIENT BACKGROUND ===== */
+    .main {
+        background: linear-gradient(135deg, #0f172a 0%, #1a2744 100%);
+    }
+    
+    /* ===== TOAST/SPINNER ===== */
+    .stSpinner>div {
+        background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%);
+    }
+    
+    /* ===== TEXT COLOR FIX ===== */
+    .stMarkdown {
+        color: #cbd5e1 !important;
+    }
+    
+    ul li {
+        color: #cbd5e1 !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🟢 2. INITIALIZE SESSION STATE (2 Samples)
+# 🟢 2. DATABASE INITIALIZATION (SQLite)
 # ==========================================
-default_values = {
-    'age': 50, 'sex': 1, 'trestbps': 120, 'chol': 200, 'fbs': 0,
-    'thalach': 150, 'cp': 1, 'exang': 0, 'oldpeak': 1.0, 
-    'restecg': 1, 'slope': 1, 'ca': 0, 'thal': 1
-}
-for key, val in default_values.items():
-    if key not in st.session_state:
-        st.session_state[key] = val
+def init_db():
+    conn = sqlite3.connect('pulse_patients.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS patient_history 
+                 (timestamp TEXT, patient_id TEXT, disease_module TEXT, risk_score REAL)''')
+    conn.commit()
+    conn.close()
 
-def load_lowest_risk():
-    # Guaranteed low-risk: Young, athletic, female, optimal vitals, non-cardiac pain (cp=2 avoids Silent Ischemia flag)
-    st.session_state.update({'age': 35, 'sex': 0, 'trestbps': 110, 'chol': 150, 'fbs': 0, 
-                             'thalach': 180, 'cp': 2, 'exang': 0, 'oldpeak': 0.0, 
-                             'restecg': 0, 'slope': 0, 'ca': 0, 'thal': 1})
+init_db()
 
-def load_highest_risk():
-    # Guaranteed high-risk: Older, male, severe clinical symptoms
-    st.session_state.update({'age': 67, 'sex': 1, 'trestbps': 160, 'chol': 310, 'fbs': 1, 
-                             'thalach': 108, 'cp': 1, 'exang': 1, 'oldpeak': 2.6, 
-                             'restecg': 2, 'slope': 1, 'ca': 3, 'thal': 3})
+def save_patient_record(patient_id, module, risk_score):
+    conn = sqlite3.connect('pulse_patients.db')
+    c = conn.cursor()
+    c.execute("INSERT INTO patient_history VALUES (?, ?, ?, ?)", 
+              (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), patient_id, module, risk_score))
+    conn.commit()
+    conn.close()
 
 # ==========================================
-# 🟢 3. LOAD MODEL
+# 🟢 3. PDF GENERATION ENGINE
+# ==========================================
+def create_pdf_report(patient_id, disease, risk_pct, risk_label, summary, details):
+    # FPDF cannot handle emojis. This helper completely strips them out.
+    def clean_text(text):
+        return str(text).encode('latin-1', 'ignore').decode('latin-1').strip()
+        
+    safe_disease = clean_text(disease)
+    safe_risk_label = clean_text(risk_label)
+    safe_summary = clean_text(summary)
+    
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(200, 10, txt="PULSE Clinical Diagnostic Report", ln=True, align='C')
+    
+    pdf.set_font("Arial", 'I', 10)
+    pdf.cell(200, 10, txt=f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True, align='C')
+    pdf.ln(10)
+    
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(100, 10, txt=f"Patient ID: {clean_text(patient_id)}", ln=False)
+    pdf.cell(100, 10, txt=f"Module: {safe_disease}", ln=True)
+    pdf.cell(100, 10, txt=f"Calculated Risk: {risk_pct}%", ln=False)
+    pdf.cell(100, 10, txt=f"Risk Tier: {safe_risk_label}", ln=True)
+    pdf.ln(10)
+    
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(200, 10, txt="Clinical Summary:", ln=True)
+    pdf.set_font("Arial", '', 11)
+    pdf.multi_cell(0, 8, txt=safe_summary)
+    pdf.ln(5)
+    
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(200, 10, txt="Actionable Intelligence:", ln=True)
+    pdf.set_font("Arial", '', 11)
+    
+    for category, tips in details.items():
+        pdf.set_font("Arial", 'B', 11)
+        pdf.cell(200, 8, txt=f"{clean_text(category)}:", ln=True)
+        pdf.set_font("Arial", '', 11)
+        for tip in tips:
+            pdf.multi_cell(0, 8, txt=f"  - {clean_text(tip)}")
+    
+    filename = f"temp_report_{clean_text(patient_id)}.pdf"
+    pdf.output(filename)
+    with open(filename, "rb") as f:
+        bytes_data = f.read()
+    os.remove(filename)
+    return bytes_data
+
+# ==========================================
+# 🟢 4. CLINICAL ALERTS ENGINE
+# ==========================================
+def check_clinical_alerts(disease, inputs):
+    alerts = []
+    if disease == "❤️ Heart Disease":
+        if inputs.get('trestbps', 0) > 160 and inputs.get('chol', 0) > 280:
+            alerts.append("CRITICAL: Concurrent Stage 2 Hypertension and Severe Hypercholesterolemia detected. Immediate cardiovascular workup required.")
+    elif disease == "🩸 Diabetes":
+        if inputs.get('Glucose', 0) > 200:
+            alerts.append("CRITICAL: Fasting Plasma Glucose > 200 mg/dL. Severe hyperglycemia detected. Risk of diabetic ketoacidosis.")
+    elif disease == "🫘 Chronic Kidney Disease":
+        if inputs.get('GFR', 100) < 30 and inputs.get('SerumCreatinine', 0) > 2.0:
+            alerts.append("CRITICAL: GFR indicates Stage 4/5 Severe Renal Failure. Urgent nephrology consultation and dialysis evaluation required.")
+    return alerts
+
+# ==========================================
+# 🟢 5. ASSET LOADING (CACHED)
 # ==========================================
 @st.cache_resource
-def load_assets():
+def load_assets(prefix):
     try:
-        model = pickle.load(open('models/heart_model.pkl', 'rb'))
-        scaler = pickle.load(open('models/heart_scaler.pkl', 'rb'))
-        features = pickle.load(open('models/heart_features.pkl', 'rb'))
-        model_name = pickle.load(open('models/heart_model_name.pkl', 'rb'))
-        return model, scaler, features, model_name
+        model = pickle.load(open(f'models/{prefix}_model.pkl', 'rb'))
+        scaler = pickle.load(open(f'models/{prefix}_scaler.pkl', 'rb'))
+        features = pickle.load(open(f'models/{prefix}_features.pkl', 'rb'))
+        return model, scaler, features
     except FileNotFoundError:
-        st.error("❌ Model files not found. Please run the training engine first.")
-        st.stop()
+        return None, None, None
 
-model, scaler, expected_features, model_name = load_assets()
+heart_model, heart_scaler, heart_features = load_assets('heart')
+diab_model, diab_scaler, diab_features = load_assets('diabetes')
+ckd_model, ckd_scaler, ckd_features = load_assets('ckd')
 
 # ==========================================
-# 🟢 4. DYNAMIC & DETAILED RECOMMENDATION
+# 🟢 6. RECOMMENDATION ENGINES (FULL DETAIL)
 # ==========================================
-def _build_recommendation(risk_pct: float, inputs: dict):
-    # Dynamic Triggers based on user input
+def _build_heart_recommendation(risk_pct, inputs):
     high_bp = inputs.get('trestbps', 120) > 130
     high_chol = inputs.get('chol', 200) > 240
     low_hr = inputs.get('thalach', 150) < 120
@@ -192,7 +516,6 @@ def _build_recommendation(risk_pct: float, inputs: dict):
             ]
         }
 
-    # Inject dynamic user-specific warnings
     if high_bp:
         detail.setdefault("⚠️ Specific Warning", []).append(f"Your Resting BP ({inputs['trestbps']} mmHg) is dangerously elevated. Prioritize sodium reduction.")
     if high_chol:
@@ -202,167 +525,593 @@ def _build_recommendation(risk_pct: float, inputs: dict):
 
     return {'risk_pct': round(risk_pct, 2), 'risk_label': label, 'advice_summary': summary, 'advice_detail': detail}
 
+def _build_diabetes_recommendation(risk_pct, inputs):
+    if risk_pct <= 25:
+        label = "LOW RISK 🟢"
+        summary = "Your glycemic and metabolic indicators are stable. Maintain your healthy habits."
+        detail = {
+            "Diet": ["Maintain a balanced diet rich in complex carbohydrates and fiber.", "Drink water primarily; avoid sugary sodas and juices."],
+            "Lifestyle": ["Aim for 150 minutes of moderate exercise per week.", "Ensure 7-8 hours of sleep to maintain healthy metabolic hormones."]
+        }
+    elif risk_pct <= 50:
+        label = "MEDIUM RISK 🟡 (Possible Prediabetes)"
+        summary = "You show signs of metabolic stress. Action taken now can prevent progression to Type 2 Diabetes."
+        detail = {
+            "Medical Checks": ["Schedule a Fasting Blood Glucose and HbA1c test with your doctor."],
+            "Dietary Overhaul": ["Switch completely to complex carbs.", "Increase fiber intake significantly."],
+            "Exercise": ["Incorporate strength training 2-3 times a week.", "Take a 10-15 minute walk immediately after large meals to lower post-meal blood sugar."]
+        }
+    else:
+        label = "HIGH RISK 🔴"
+        summary = "⚠️ URGENT: Your indicators strongly suggest the presence of Diabetes. Please consult an endocrinologist immediately."
+        detail = {
+            "IMMEDIATE ACTIONS": ["Book an appointment with a doctor for a definitive HbA1c and Oral Glucose Tolerance Test (OGTT)."],
+            "Diet (Strict)": ["Eliminate all simple sugars, sweets, and refined carbohydrates immediately.", "Adopt a strict low-glycemic or clinically managed low-carb diet."],
+            "Complication Prevention": ["Check your feet daily for cuts or sores (diabetic neuropathy risk).", "Schedule a comprehensive eye exam (diabetic retinopathy risk)."]
+        }
+    return {'risk_pct': round(risk_pct, 2), 'risk_label': label, 'advice_summary': summary, 'advice_detail': detail}
+
+def _build_ckd_recommendation(risk_pct, inputs):
+    if risk_pct <= 20:
+        label = "LOW RISK 🟢"
+        summary = "Your kidney function indicators look normal. Maintain your current healthy lifestyle."
+        detail = {
+            "Hydration": ["Drink adequate water daily (approx 2-3 liters) to help kidneys clear sodium and toxins."],
+            "Diet & Lifestyle": ["Limit the use of over-the-counter painkillers like Ibuprofen/NSAIDs, which can stress the kidneys over time."],
+            "Monitoring": ["Continue with annual routine checkups including basic metabolic panels."]
+        }
+    elif risk_pct <= 50:
+        label = "MEDIUM RISK 🟡 (Renal Stress)"
+        summary = "You have markers indicating possible early-stage renal stress. Early intervention is key."
+        detail = {
+            "Medical Actions": ["Schedule a follow-up test for Serum Creatinine, BUN, and a urinalysis for protein (proteinuria).", "Ensure strict control of your blood pressure and blood sugar."],
+            "Dietary Changes": ["Adopt a moderately low-sodium diet (< 2,300 mg/day) to reduce fluid retention and BP.", "Avoid crash diets or extremely high-protein diets."]
+        }
+    else:
+        label = "HIGH RISK 🔴"
+        summary = "⚠️ URGENT: Your physiological indicators strongly suggest compromised kidney function. Consult a Nephrologist immediately."
+        detail = {
+            "IMMEDIATE ACTIONS": ["Book an appointment with a Nephrologist within the next 7 days.", "Request a comprehensive Renal Panel, GFR assessment, and Renal Ultrasound."],
+            "Strict Renal Diet": ["Low Sodium: Avoid all processed foods, canned soups, and fast food.", "Controlled Protein: Work with a renal dietitian to consume the exact right amount of protein."],
+            "Symptom Monitoring": ["Watch for swelling in the ankles/legs (edema), extreme fatigue, metallic taste in the mouth, or changes in urination frequency."]
+        }
+    return {'risk_pct': round(risk_pct, 2), 'risk_label': label, 'advice_summary': summary, 'advice_detail': detail}
+
 # ==========================================
-# 🟢 5. SIDEBAR
+# 🟢 7. SIDEBAR & NAVIGATION
 # ==========================================
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/2966/2966327.png", width=90)
-    st.title("PULSE System")
-    st.caption("Predictive Unified Learning System for Health Evaluation")
+    st.markdown("<div style='text-align: center; padding: 20px;'><img src='https://cdn-icons-png.flaticon.com/512/2966/2966327.png' width='100' style='border-radius: 50%; background: rgba(255,255,255,0.1); padding: 15px;'></div>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center; color: white; font-size: 2em; margin-top: 0;'>PULSE System</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: rgba(255,255,255,0.8); font-size: 0.9em;'><i>Predictive Unified Learning System for Health Evaluation</i></p>", unsafe_allow_html=True)
     st.markdown("---")
-    page = st.radio("Navigation", ["🩺 Risk Assessment", "📖 Clinical Reference Guide", "ℹ️ About PULSE"])
+    
+    st.markdown("<p style='color: white; font-weight: 600; font-size: 1.1em;'>📍 Navigation Menu</p>", unsafe_allow_html=True)
+    page = st.radio("Select Module:", ["🩺 Risk Assessment", "📈 Patient History Tracker", "📖 Clinical Reference", "ℹ️ About PULSE"], label_visibility="collapsed")
     st.markdown("---")
-    st.warning("⚠️ **Screening Tool Only.**\nPULSE is NOT a diagnostic device. Always consult a physician.")
+    
+    st.markdown("""
+    <div style='background: rgba(255,255,255,0.1); padding: 15px; border-radius: 10px; border-left: 4px solid #00d4ff; margin-top: 30px;'>
+        <p style='color: white; font-weight: 600; margin: 0 0 8px 0;'>⚠️ Important Notice</p>
+        <p style='color: rgba(255,255,255,0.9); font-size: 0.85em; margin: 0;'>
+            <strong>PULSE</strong> is a <strong>screening tool only</strong>. 
+            It is <strong>NOT</strong> a diagnostic device. 
+            Always consult a qualified healthcare professional for medical advice.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("""
+    <div style='color: rgba(255,255,255,0.7); font-size: 0.8em; text-align: center; margin-top: 40px;'>
+        <p>Made with ❤️ for Healthcare</p>
+        <p>Version 1.0 | Final Year Project</p>
+    </div>
+    """, unsafe_allow_html=True)
 
 # ==========================================
 # 🟢 PAGE 1: RISK ASSESSMENT
 # ==========================================
 if page == "🩺 Risk Assessment":
-    st.markdown("<h1 class='pulse-header' style='text-align:center; color:#ff4b4b;'>❤️ Cardiovascular Risk Assessment</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align:center;'><b>PULSE</b> — Early detection of heart disease risk using machine learning<br>(B.Tech Final Year Project, Bharati Vidyapeeth COE Pune)</p>", unsafe_allow_html=True)
-    st.write("---")
-
-    st.write("**Quick Demo:** Select a profile to load predefined data.")
-    colA, colB = st.columns(2)
-    with colA:
-        st.button("🟢 Load Healthy Patient (Low Risk)", on_click=load_lowest_risk)
-    with colB:
-        st.button("🔴 Load Symptomatic Patient (High Risk)", on_click=load_highest_risk)
+    st.markdown("""
+    <div style='background: linear-gradient(135deg, #0099cc 0%, #00d4ff 100%); padding: 40px 30px; border-radius: 15px; margin-bottom: 30px;'>
+        <h1 style='color: #0f172a; text-align: center; margin: 0; text-shadow: 0 2px 10px rgba(0,0,0,0.2); font-size: 2.5em;'>
+            🩺 PULSE Risk Assessment System
+        </h1>
+        <p style='color: #0f172a; text-align: center; font-size: 1.1em; margin-top: 10px; font-weight: 600;'>
+            Advanced Medical Screening & Risk Evaluation
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        selected_disease = st.selectbox(
+            "Select Disease Module:",
+            ["❤️ Heart Disease", "🩸 Diabetes", "🫘 Chronic Kidney Disease"],
+            label_visibility="visible"
+        )
+    
+    st.markdown("---")
+    
+    patient_id = st.text_input(
+        "Patient ID / Name (For Database Logging):",
+        "PATIENT-001",
+        help="Enter a unique identifier for this patient record"
+    )
+    
+    submitted = False
+    result = None
+    model_used = None
+    features_used = None
+    X_live = None
+    X_scaled = None
+    raw_inputs = {}
 
     with st.form("pulse_form"):
-        st.subheader("Patient Physiological Parameters")
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            age = st.number_input("Age (years)", 20, 100, key='age')
-            sex = st.selectbox("Sex", [0, 1], format_func=lambda x: "Male" if x == 1 else "Female", key='sex')
-            trestbps = st.number_input("Resting BP (mmHg)", 80, 220, key='trestbps')
-        with c2:
-            chol = st.number_input("Serum Cholesterol (mg/dl)", 100, 600, key='chol')
-            fbs = st.selectbox("Fasting Blood Sugar > 120", [0, 1], format_func=lambda x: "Yes" if x == 1 else "No", key='fbs')
-            thalach = st.number_input("Max Heart Rate Achieved", 60, 220, key='thalach')
-        with c3:
-            # Updated tooltip to include Silent Ischemia warning
-            cp = st.selectbox("Chest Pain Type", [0,1,2,3], key='cp', help="0=Typical Angina, 1=Atypical, 2=Non-anginal, 3=Asymptomatic (⚠️ Silent Ischemia Risk)")
-            exang = st.selectbox("Exercise Induced Angina", [0, 1], format_func=lambda x: "Yes" if x == 1 else "No", key='exang')
-            oldpeak = st.number_input("ST Depression (oldpeak)", 0.0, 6.0, step=0.1, key='oldpeak')
+        st.markdown("<h3 style='color: #00ffff; border-bottom: 3px solid #00d4ff; padding-bottom: 10px;'>📋 Patient Physiological Parameters</h3>", unsafe_allow_html=True)
+        
+        # ---------------------------------------------------------
+        # HEART DISEASE FORM
+        # ---------------------------------------------------------
+        if selected_disease == "❤️ Heart Disease":
+            if heart_model is None:
+                st.error("❌ Heart Disease model not found. Run `pulse_heart_engine.py` first.")
+                st.stop()
 
-        st.markdown("---")
-        st.subheader("Advanced Cardiac Indicators")
-        c4, c5, c6 = st.columns(3)
-        with c4:
-            restecg = st.selectbox("Resting ECG", [0,1,2], key='restecg')
-            slope = st.selectbox("Slope of ST Segment", [0,1,2], key='slope')
-        with c5:
-            ca = st.selectbox("Major Vessels (Fluoroscopy)", [0,1,2,3], key='ca')
-            thal = st.selectbox("Thalassemia", [1,2,3], key='thal')
-        with c6:
-            st.write("")
-            st.write("")
-            submitted = st.form_submit_button("🚀 Analyze with PULSE Engine")
+            st.markdown("<p style='color: #00ffff; font-weight: 600; margin-top: 20px; font-size: 1.1em;'>💙 Basic Cardiac Parameters</p>", unsafe_allow_html=True)
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                age = st.number_input("Age (years)", 20, 100, 50)
+                sex = st.selectbox("Sex", [0, 1], format_func=lambda x: "Male" if x == 1 else "Female")
+                trestbps = st.number_input("Resting BP (mmHg)", 80, 220, 120)
+            with c2:
+                chol = st.number_input("Serum Cholesterol (mg/dl)", 100, 600, 200)
+                fbs = st.selectbox("Fasting Blood Sugar > 120", [0, 1], format_func=lambda x: "Yes" if x == 1 else "No")
+                thalach = st.number_input("Max Heart Rate Achieved", 60, 220, 150)
+            with c3:
+                cp = st.selectbox("Chest Pain Type", [0,1,2,3], help="0=Typical Angina, 1=Atypical, 2=Non-anginal, 3=Asymptomatic")
+                exang = st.selectbox("Exercise Induced Angina", [0, 1], format_func=lambda x: "Yes" if x == 1 else "No")
+                oldpeak = st.number_input("ST Depression (oldpeak)", 0.0, 6.0, 1.0, step=0.1)
 
-    if submitted:
-        with st.spinner("Running PULSE prediction engine..."):
-            raw_inputs = {
-                'age': age, 'sex': sex, 'cp': cp, 'trestbps': trestbps, 'chol': chol,
-                'fbs': fbs, 'restecg': restecg, 'thalach': thalach, 'exang': exang,
-                'oldpeak': oldpeak, 'slope': slope, 'ca': ca, 'thal': thal
-            }
-            df_input = pd.DataFrame([raw_inputs])
-
-            # EXACT feature engineering matched to your training script
-            df_input['age_group'] = pd.cut(df_input['age'], bins=[0, 40, 50, 60, 70, 100], labels=[0, 1, 2, 3, 4]).astype(int)
-            df_input['high_bp'] = (df_input['trestbps'] > 130).astype(int)
-            df_input['high_chol'] = (df_input['chol'] > 240).astype(int)
-            df_input['low_thalach'] = (df_input['thalach'] < 120).astype(int)
-            df_input['oldpeak_cat'] = pd.cut(df_input['oldpeak'], bins=[-0.1, 0, 1, 2, 10], labels=[0, 1, 2, 3]).astype(int)
-
-            for col in expected_features:
-                if col not in df_input.columns: df_input[col] = 0
-            X_live = df_input[expected_features]
-            X_scaled = scaler.transform(X_live)
+            st.markdown("<p style='color: #00ffff; font-weight: 600; margin-top: 20px; font-size: 1.1em;'>🔬 Advanced Cardiac Indicators</p>", unsafe_allow_html=True)
+            c4, c5, c6 = st.columns(3)
+            with c4:
+                restecg = st.selectbox("Resting ECG", [0,1,2])
+                slope = st.selectbox("Slope of ST Segment", [0,1,2])
+            with c5:
+                ca = st.selectbox("Major Vessels (Fluoroscopy)", [0,1,2,3])
+                thal = st.selectbox("Thalassemia", [1,2,3])
+            with c6:
+                st.write("")
+                st.write("")
+                submitted = st.form_submit_button("🚀 Analyze Heart Risk", use_container_width=True)
             
-            prob = model.predict_proba(X_scaled)[0][1]
-            result = _build_recommendation(prob * 100, raw_inputs)
+            if submitted:
+                raw_inputs = {'age': age, 'sex': sex, 'cp': cp, 'trestbps': trestbps, 'chol': chol, 'fbs': fbs, 'restecg': restecg, 'thalach': thalach, 'exang': exang, 'oldpeak': oldpeak, 'slope': slope, 'ca': ca, 'thal': thal}
 
-        # Display Results
+        # ---------------------------------------------------------
+        # DIABETES FORM
+        # ---------------------------------------------------------
+        elif selected_disease == "🩸 Diabetes":
+            if diab_model is None:
+                st.error("❌ Diabetes model not found. Run `pulse_diabetes_engine.py` first.")
+                st.stop()
+
+            st.markdown("<p style='color: #00ffff; font-weight: 600; margin-top: 20px; font-size: 1.1em;'>🩺 Metabolic & Glucose Parameters</p>", unsafe_allow_html=True)
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                age = st.number_input("Age (years)", 20, 100, 45)
+                glucose = st.number_input("Plasma Glucose", 50, 300, 110)
+                bp = st.number_input("Diastolic BP (mmHg)", 40, 150, 75)
+            with c2:
+                bmi = st.number_input("BMI (Body Mass Index)", 10.0, 60.0, 25.0, step=0.1)
+                insulin = st.number_input("Serum Insulin (mu U/ml)", 0, 800, 80)
+            with c3:
+                pregnancies = st.number_input("Pregnancies", 0, 20, 0)
+                skin = st.number_input("Triceps Skin Fold (mm)", 0, 100, 20)
+                pedigree = st.number_input("Diabetes Pedigree Function", 0.0, 3.0, 0.4, step=0.05)
+            
+            st.markdown("---")
+            submitted = st.form_submit_button("🚀 Analyze Diabetes Risk", use_container_width=True)
+            
+            if submitted:
+                raw_inputs = {'Pregnancies': pregnancies, 'Glucose': glucose, 'BloodPressure': bp, 'SkinThickness': skin, 'Insulin': insulin, 'BMI': bmi, 'DiabetesPedigreeFunction': pedigree, 'Age': age}
+
+        # ---------------------------------------------------------
+        # CKD FORM
+        # ---------------------------------------------------------
+        elif selected_disease == "🫘 Chronic Kidney Disease":
+            if ckd_model is None:
+                st.error("❌ CKD model not found. Run `pulse_ckd_engine.py` first.")
+                st.stop()
+
+            st.markdown("<p style='color: #00ffff; font-weight: 600; margin-top: 20px; font-size: 1.1em;'>🫘 Renal Function & Blood Chemistry</p>", unsafe_allow_html=True)
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                age = st.number_input("Age (years)", 20, 100, 60)
+                sys_bp = st.number_input("Systolic BP (mmHg)", 80, 250, 130)
+                dias_bp = st.number_input("Diastolic BP (mmHg)", 40, 150, 80)
+                gfr = st.number_input("Glomerular Filtration Rate (GFR)", 5.0, 150.0, 90.0)
+            with c2:
+                creatinine = st.number_input("Serum Creatinine (mg/dL)", 0.1, 15.0, 0.9, step=0.1)
+                bun = st.number_input("BUN Levels (mg/dL)", 2.0, 100.0, 15.0)
+                hba1c = st.number_input("HbA1c (%)", 4.0, 15.0, 5.5, step=0.1)
+                protein = st.selectbox("Protein in Urine", [0, 1, 2, 3, 4, 5])
+            with c3:
+                bmi = st.number_input("BMI", 10.0, 60.0, 25.0)
+                sodium = st.number_input("Serum Sodium (mEq/L)", 110.0, 160.0, 140.0)
+                hemo = st.number_input("Hemoglobin Levels (g/dL)", 5.0, 20.0, 14.0)
+                fatigue = st.selectbox("Fatigue Levels", [0, 1, 2, 3, 4, 5])
+
+            st.markdown("---")
+            submitted = st.form_submit_button("🚀 Analyze CKD Risk", use_container_width=True)
+            
+            if submitted:
+                raw_inputs = {
+                    'Age': age, 'SystolicBP': sys_bp, 'DiastolicBP': dias_bp, 'GFR': gfr,
+                    'SerumCreatinine': creatinine, 'BUNLevels': bun, 'HbA1c': hba1c, 
+                    'ProteinInUrine': protein, 'BMI': bmi, 'SerumElectrolytesSodium': sodium,
+                    'HemoglobinLevels': hemo, 'FatigueLevels': fatigue
+                }
+
+    # ---------------------------------------------------------
+    # PROCESSING LOGIC & DISPLAY RESULTS
+    # ---------------------------------------------------------
+    if submitted:
+        # 1. Trigger Automated Alerts
+        alerts = check_clinical_alerts(selected_disease, raw_inputs)
+        for alert in alerts:
+            st.markdown(f"<div class='alert-box'>🚨 <b>{alert}</b></div>", unsafe_allow_html=True)
+
+        with st.spinner("Running PULSE Engine..."):
+            df_input = pd.DataFrame([raw_inputs])
+            
+            if selected_disease == "❤️ Heart Disease":
+                df_input['age_group'] = pd.cut(df_input['age'], bins=[0, 40, 50, 60, 70, 100], labels=[0, 1, 2, 3, 4]).astype(int)
+                df_input['high_bp'] = (df_input['trestbps'] > 130).astype(int)
+                df_input['high_chol'] = (df_input['chol'] > 240).astype(int)
+                df_input['low_thalach'] = (df_input['thalach'] < 120).astype(int)
+                df_input['oldpeak_cat'] = pd.cut(df_input['oldpeak'], bins=[-0.1, 0, 1, 2, 10], labels=[0, 1, 2, 3]).astype(int)
+                
+                for col in heart_features:
+                    if col not in df_input.columns: df_input[col] = 0
+                X_live = df_input[heart_features]
+                X_scaled = heart_scaler.transform(X_live)
+                prob = heart_model.predict_proba(X_scaled)[0][1] * 100
+                result = _build_heart_recommendation(prob, raw_inputs)
+                model_used, features_used = heart_model, heart_features
+
+            elif selected_disease == "🩸 Diabetes":
+                df_input['Age_Group'] = pd.cut(df_input['Age'], bins=[0, 30, 45, 60, 100], labels=[0, 1, 2, 3]).astype(int)
+                df_input['BMI_Class'] = pd.cut(df_input['BMI'], bins=[0, 25, 30, 35, 100], labels=[0, 1, 2, 3]).astype(int)
+                df_input['High_Glucose'] = (df_input['Glucose'] > 140).astype(int)
+                df_input['High_BP'] = (df_input['BloodPressure'] > 80).astype(int)
+                
+                for col in diab_features:
+                    if col not in df_input.columns: df_input[col] = 0
+                X_live = df_input[diab_features]
+                X_scaled = diab_scaler.transform(X_live)
+                prob = diab_model.predict_proba(X_scaled)[0][1] * 100
+                result = _build_diabetes_recommendation(prob, raw_inputs)
+                model_used, features_used = diab_model, diab_features
+
+            elif selected_disease == "🫘 Chronic Kidney Disease":
+                df_input['GFR_Stage'] = pd.cut(df_input['GFR'], bins=[-1, 15, 30, 60, 90, 200], labels=[5, 4, 3, 2, 1]).astype(int)
+                df_input['High_Creatinine'] = (df_input['SerumCreatinine'] > 1.2).astype(int)
+                df_input['High_BUN'] = (df_input['BUNLevels'] > 20).astype(int)
+                df_input['High_BP_Sys'] = (df_input['SystolicBP'] > 130).astype(int)
+                
+                for col in ckd_features:
+                    if col not in df_input.columns: df_input[col] = 0
+                X_live = df_input[ckd_features]
+                X_scaled = ckd_scaler.transform(X_live)
+                prob = ckd_model.predict_proba(X_scaled)[0][1] * 100
+                result = _build_ckd_recommendation(prob, raw_inputs)
+                model_used, features_used = ckd_model, ckd_features
+
+        # 2. Database Save
+        save_patient_record(patient_id, selected_disease, prob)
+        st.toast(f"✅ Record saved for {patient_id}")
+
+        # 3. Render Dashboard
         st.markdown("---")
-        st.header("📋 PULSE Diagnostic Report")
+        st.markdown("""
+        <div style='background: linear-gradient(135deg, #0099cc 0%, #00d4ff 100%); padding: 30px; border-radius: 15px; margin-bottom: 30px;'>
+            <h2 style='color: #0f172a; margin: 0; text-align: center; font-size: 2em;'>📋 PULSE Diagnostic Report</h2>
+            <p style='color: #0f172a; text-align: center; margin-top: 10px; font-weight: 600;'>Comprehensive Risk Assessment & Clinical Insights</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
         col_left, col_right = st.columns([1, 2])
 
         with col_left:
-            st.metric("Calculated Risk Probability", f"{result['risk_pct']:.1f}%")
-            if result['risk_pct'] <= 15: 
-                st.markdown(f"<div class='risk-low'>{result['risk_label']}</div>", unsafe_allow_html=True)
-            elif result['risk_pct'] <= 40: 
-                st.markdown(f"<div class='risk-med'>{result['risk_label']}</div>", unsafe_allow_html=True)
-            else: 
-                st.markdown(f"<div class='risk-high'>{result['risk_label']}</div>", unsafe_allow_html=True)
+            st.markdown("<h3 style='color: #00ffff; border-bottom: 3px solid #00d4ff; padding-bottom: 10px;'>📊 Risk Score</h3>", unsafe_allow_html=True)
+            
+            # Display risk metric with custom styling
+            st.markdown(f"""
+            <div style='background: linear-gradient(135deg, #0f172a 0%, #1a2744 100%); 
+                        padding: 25px; border-radius: 15px; border: 2px solid #00d4ff; text-align: center;'>
+                <p style='margin: 0; color: #e0f2fe; font-size: 0.9em; font-weight: 600;'>Calculated Risk Probability</p>
+                <h1 style='margin: 15px 0; color: #00ffff; font-size: 3em; background: none; -webkit-text-fill-color: unset; text-shadow: 0 0 20px rgba(0, 212, 255, 0.4);'>
+                    {result['risk_pct']:.1f}%
+                </h1>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if "LOW RISK" in result['risk_label']: st.markdown(f"<div class='risk-low'>{result['risk_label']}</div>", unsafe_allow_html=True)
+            elif "MEDIUM RISK" in result['risk_label']: st.markdown(f"<div class='risk-med'>{result['risk_label']}</div>", unsafe_allow_html=True)
+            else: st.markdown(f"<div class='risk-high'>{result['risk_label']}</div>", unsafe_allow_html=True)
+            
+            st.markdown("<div style='margin: 20px 0;'></div>", unsafe_allow_html=True)
             st.progress(min(result['risk_pct'] / 100, 1.0))
+            st.markdown("<div style='margin: 20px 0;'></div>", unsafe_allow_html=True)
+
+            # Provide PDF Download
+            pdf_bytes = create_pdf_report(patient_id, selected_disease, result['risk_pct'], result['risk_label'], result['advice_summary'], result['advice_detail'])
+            st.download_button(label="📥 Download Clinical PDF Report",
+                               data=pdf_bytes,
+                               file_name=f"PULSE_Report_{patient_id}.pdf",
+                               mime="application/pdf",
+                               use_container_width=True)
 
         with col_right:
-            st.subheader("Actionable Intelligence")
+            st.markdown("<h3 style='color: #00ffff; border-bottom: 3px solid #00d4ff; padding-bottom: 10px;'>💡 Actionable Intelligence</h3>", unsafe_allow_html=True)
             st.info(result['advice_summary'])
+            st.markdown("---")
             for category, tips in result['advice_detail'].items():
                 with st.expander(f"**{category}**", expanded=True):
-                    for tip in tips:
-                        st.write(f"• {tip}")
+                    for tip in tips: st.write(f"• {tip}")
+        
+        # 4. User-Friendly SHAP Breakdown
+        st.markdown("---")
+        st.markdown("<h3 style='color: #00ffff; border-bottom: 3px solid #00d4ff; padding-bottom: 10px;'>🔍 Patient-Specific Risk Breakdown</h3>", unsafe_allow_html=True)
+        st.write("Based on our AI analysis, here are the specific factors driving this patient's risk score.")
+        
+        with st.spinner("Analyzing risk factors..."):
+            try:
+                explainer = shap.Explainer(model_used)
+                shap_values = explainer(X_scaled)
+                
+                if isinstance(explainer.expected_value, (list, np.ndarray)):
+                    shap_vals = shap_values.values[0, :, 1]
+                else:
+                    shap_vals = shap_values.values[0]
 
-        report_text = f"PULSE Report\nGenerated: {datetime.now().strftime('%d %b %Y, %I:%M %p')}\nRisk: {result['risk_pct']:.1f}%\nSummary: {result['advice_summary']}"
-        st.download_button("📄 Download PDF/TXT Report", report_text, file_name=f"PULSE_Report_{datetime.now().strftime('%Y%m%d')}.txt")
+                shap_df = pd.DataFrame({
+                    'Feature': features_used,
+                    'Patient_Value': X_live.iloc[0].values,
+                    'Impact': shap_vals
+                })
+                
+                shap_df['Abs_Impact'] = shap_df['Impact'].abs()
+                shap_df = shap_df.sort_values(by='Abs_Impact', ascending=False)
+                
+                risk_drivers = shap_df[shap_df['Impact'] > 0].head(4)
+                protectors = shap_df[shap_df['Impact'] < 0].head(4)
+
+                c_risk, c_safe = st.columns(2)
+                
+                with c_risk:
+                    st.markdown("""
+                    <div style='background: linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%); padding: 20px; 
+                                border-radius: 12px; border-left: 5px solid #ff6b6b;'>
+                        <p style='color: #fecaca; font-weight: 600; margin: 0 0 15px 0;'>🚨 Top Risk Drivers</p>
+                        <p style='color: #fed7aa; font-size: 0.9em; margin: 0;'><i>Factors pushing the risk HIGHER</i></p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    if risk_drivers.empty:
+                        st.write("✓ No major risk drivers detected.")
+                    else:
+                        for _, row in risk_drivers.iterrows():
+                            st.write(f"🔺 **{row['Feature']}**  \nValue: {row['Patient_Value']:.2f}")
+
+                with c_safe:
+                    st.markdown("""
+                    <div style='background: linear-gradient(135deg, #134e4a 0%, #0d3830 100%); padding: 20px; 
+                                border-radius: 12px; border-left: 5px solid #4ade80;'>
+                        <p style='color: #d1fae5; font-weight: 600; margin: 0 0 15px 0;'>🛡️ Top Protective Factors</p>
+                        <p style='color: #a7f3d0; font-size: 0.9em; margin: 0;'><i>Factors keeping the risk LOWER</i></p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    if protectors.empty:
+                        st.write("✓ No major protective factors detected.")
+                    else:
+                        for _, row in protectors.iterrows():
+                            st.write(f"🔽 **{row['Feature']}**  \nValue: {row['Patient_Value']:.2f}")
+
+            except Exception as e:
+                st.warning("⚠️ Risk breakdown is currently optimized for Tree-based models.")
 
 # ==========================================
-# 🟢 PAGE 2: CLINICAL REFERENCE GUIDE
+# 🟢 PAGE 2: PATIENT HISTORY TRACKER
 # ==========================================
-elif page == "📖 Clinical Reference Guide":
-    st.title("📖 Clinical Reference Guide")
-    st.markdown("Understanding the input parameters is critical for accurate risk assessment. Below is a dictionary of the clinical terms used in the PULSE system.")
-    
-    st.header("The Basics")
+elif page == "📈 Patient History Tracker":
     st.markdown("""
-    * **Resting Blood Pressure (trestbps):** Measured in mmHg. Normal is <120. Hypertension Stage 1 is 130-139, and Stage 2 is 140 or higher.
-    * **Serum Cholesterol (chol):** Measured in mg/dL. Optimal is under 200. Readings over 240 indicate high cardiovascular risk.
-    * **Fasting Blood Sugar (fbs):** A reading > 120 mg/dL is an indicator of potential diabetes.
-    """)
+    <div style='background: linear-gradient(135deg, #0099cc 0%, #00d4ff 100%); padding: 40px 30px; border-radius: 15px; margin-bottom: 30px;'>
+        <h1 style='color: #0f172a; text-align: center; margin: 0; text-shadow: 0 2px 10px rgba(0,0,0,0.2); font-size: 2.5em;'>
+            📈 Longitudinal Patient Tracking
+        </h1>
+        <p style='color: #0f172a; text-align: center; font-size: 1.1em; margin-top: 10px; font-weight: 600;'>
+            Monitor Risk Progression Across Multiple Visits
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
     
-    st.header("Complex Diagnostics")
-    st.markdown("""
-    * **Chest Pain Type (cp):**
-        * `0` **Typical Angina:** Classic chest pain caused by reduced blood flow to the heart.
-        * `1` **Atypical Angina:** Chest pain not fitting classic criteria.
-        * `2` **Non-anginal Pain:** Pain not related to the heart (e.g., muscle spasms or acid reflux).
-        * `3` **Asymptomatic (⚠️ High Risk Indicator):** No chest pain present. *Note: In clinical screening datasets like the one PULSE uses, an asymptomatic patient who still requires a cardiac workup often suffers from **Silent Ischemia**—a severe, painless blockage that carries a highly elevated risk of sudden cardiac events.*
-    * **Resting ECG (restecg):**
-        * `0` **Normal:** Healthy electrical activity.
-        * `1` **ST-T Wave Abnormality:** Minor arrhythmias or irregular electrical signals.
-        * `2` **Left Ventricular Hypertrophy:** Enlargement of the heart's main pumping chamber.
-    * **Thalassemia (thal):**
-        * `1` **Normal:** Healthy blood flow.
-        * `2` **Fixed Defect:** A past heart attack has caused permanent tissue damage.
-        * `3` **Reversible Defect:** A current issue where blood flow is restricted during exercise.
-    * **ST Depression & Slope:**
-        * **Oldpeak:** Measures how far the ST segment on an ECG drops during exercise. A higher number indicates severe ischemia (lack of oxygen).
-        * **Slope:** Looks at the trajectory of the ECG wave. `0` (Upsloping) is healthy. `1` (Flat) or `2` (Downsloping) are strong indicators of an unhealthy heart.
-    """)
+    st.write("Track how a patient's risk profile evolves across multiple visits over time.")
+    
+    conn = sqlite3.connect('pulse_patients.db')
+    df_history = pd.read_sql_query("SELECT * FROM patient_history", conn)
+    conn.close()
+    
+    if df_history.empty:
+        st.markdown("""
+        <div style='background: linear-gradient(135deg, #0c4a6e 0%, #082f4f 100%); padding: 25px; 
+                    border-radius: 12px; border-left: 5px solid #00d4ff;'>
+            <p style='color: #e0f2fe; font-weight: 600; margin: 0;'>ℹ️ No Patient History Found</p>
+            <p style='color: #cbd5e1; font-size: 0.95em; margin: 10px 0 0 0;'>
+                Run some risk assessments first to start tracking patient data.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        patients = df_history['patient_id'].unique()
+        selected_patient = st.selectbox("Search for Patient ID:", patients)
+        
+        patient_data = df_history[df_history['patient_id'] == selected_patient].copy()
+        patient_data['timestamp'] = pd.to_datetime(patient_data['timestamp'])
+        patient_data = patient_data.sort_values('timestamp')
+        
+        st.markdown(f"<h3 style='color: #00ffff; border-bottom: 3px solid #00d4ff; padding-bottom: 10px;'>📊 Risk Trajectory for {selected_patient}</h3>", unsafe_allow_html=True)
+        
+        chart_data = patient_data[['timestamp', 'risk_score', 'disease_module']].pivot(index='timestamp', columns='disease_module', values='risk_score')
+        st.line_chart(chart_data)
+        
+        st.markdown("<h4 style='color: #00ffff; margin-top: 30px;'>📋 Detailed History Logs</h4>", unsafe_allow_html=True)
+        st.dataframe(patient_data, use_container_width=True)
 
 # ==========================================
-# 🟢 PAGE 3: ABOUT PULSE
+# 🟢 PAGE 3 & 4: REFERENCE & ABOUT
 # ==========================================
+elif page == "📖 Clinical Reference":
+    st.markdown("""
+    <div style='background: linear-gradient(135deg, #0099cc 0%, #00d4ff 100%); padding: 40px 30px; border-radius: 15px; margin-bottom: 30px;'>
+        <h1 style='color: #0f172a; text-align: center; margin: 0; text-shadow: 0 2px 10px rgba(0,0,0,0.2); font-size: 2.5em;'>
+            📖 Clinical Reference Guide
+        </h1>
+        <p style='color: #0f172a; text-align: center; font-size: 1.1em; margin-top: 10px; font-weight: 600;'>
+            Comprehensive Parameter Documentation
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("""
+    <div style='background: linear-gradient(135deg, #1a2744 0%, #0f172a 100%); 
+                padding: 30px; border-radius: 15px; border: 2px solid #00d4ff;'>
+        <h3 style='color: #00ffff; margin-top: 0;'>📚 Parameter Reference Documentation</h3>
+        <p style='color: #e0f2fe; font-size: 1.05em;'>
+            This guide provides detailed information about all input parameters used in PULSE risk assessments. 
+            Understanding these parameters is crucial for accurate data entry and interpretation of results.
+        </p>
+        <ul style='color: #cbd5e1; line-height: 1.8;'>
+            <li><strong style='color: #00ffff;'>Age:</strong> Patient age in years (20-100)</li>
+            <li><strong style='color: #00ffff;'>Blood Pressure:</strong> Measured in mmHg (millimeters of mercury)</li>
+            <li><strong style='color: #00ffff;'>BMI:</strong> Body Mass Index calculated as weight(kg)/height(m)²</li>
+            <li><strong style='color: #00ffff;'>Glucose Levels:</strong> Plasma glucose measured in mg/dL</li>
+            <li><strong style='color: #00ffff;'>Cholesterol:</strong> Serum cholesterol in mg/dL</li>
+            <li><strong style='color: #00ffff;'>GFR:</strong> Glomerular Filtration Rate in mL/min/1.73m²</li>
+            <li><strong style='color: #00ffff;'>Creatinine:</strong> Serum creatinine measured in mg/dL</li>
+            <li><strong style='color: #00ffff;'>HbA1c:</strong> Glycated hemoglobin percentage</li>
+        </ul>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("<div style='height: 30px;'></div>", unsafe_allow_html=True)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("""
+        <div style='background: linear-gradient(135deg, #134e4a 0%, #0d3830 100%); 
+                    padding: 20px; border-radius: 12px; border-left: 5px solid #4ade80;'>
+            <h4 style='color: #d1fae5; margin-top: 0;'>✅ Healthy Ranges</h4>
+            <ul style='color: #a7f3d0; margin: 0;'>
+                <li>Systolic BP: &lt; 120 mmHg</li>
+                <li>BMI: 18.5 - 24.9</li>
+                <li>Fasting Glucose: 70 - 100 mg/dL</li>
+                <li>GFR: &gt; 90 mL/min/1.73m²</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("""
+        <div style='background: linear-gradient(135deg, #7f1d1d 0%, #4c0519 100%); 
+                    padding: 20px; border-radius: 12px; border-left: 5px solid #ff6b6b;'>
+            <h4 style='color: #fecaca; margin-top: 0;'>⚠️ At-Risk Ranges</h4>
+            <ul style='color: #fed7aa; margin: 0;'>
+                <li>Systolic BP: ≥ 140 mmHg</li>
+                <li>BMI: ≥ 30</li>
+                <li>Fasting Glucose: ≥ 126 mg/dL</li>
+                <li>GFR: &lt; 60 mL/min/1.73m²</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+
 elif page == "ℹ️ About PULSE":
-    st.title("ℹ️ About the PULSE Project")
     st.markdown("""
-    **PULSE (Predictive Unified Learning System for Health Evaluation)** is an advanced machine learning framework designed to democratize preventive health screening. 
-    Rather than simply predicting binary outcomes, PULSE integrates rigorous algorithmic evaluation with a prescriptive recommendation engine to provide actionable, risk-aware intelligence.
+    <div style='background: linear-gradient(135deg, #0099cc 0%, #00d4ff 100%); padding: 40px 30px; border-radius: 15px; margin-bottom: 30px;'>
+        <h1 style='color: #0f172a; text-align: center; margin: 0; text-shadow: 0 2px 10px rgba(0,0,0,0.2); font-size: 2.5em;'>
+            ℹ️ About PULSE Project
+        </h1>
+        <p style='color: #0f172a; text-align: center; font-size: 1.1em; margin-top: 10px; font-weight: 600;'>
+            Predictive Unified Learning System for Health Evaluation
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
     
-    ### 👨‍💻 Development Team
-    This system was developed as a Final Year B.Tech Project at the Department of Electrical & Computer Engineering.
-    * **Pranjal Sharma** (PRN: 2214110546)
-    * **Vibhor Anshuman Roy** (PRN: 2214110558)
-    * **Nagisetti Surya** (PRN: 2214110556)
+    st.markdown("""
+    <div style='background: linear-gradient(135deg, #1a2744 0%, #0f172a 100%); 
+                padding: 35px; border-radius: 15px; border: 2px solid #00d4ff; margin-bottom: 30px;'>
+        <h3 style='color: #00ffff; margin-top: 0; border-bottom: 3px solid #00d4ff; padding-bottom: 15px;'>🏥 Project Overview</h3>
+        <p style='color: #e0f2fe; font-size: 1.05em; line-height: 1.8;'>
+            <strong>PULSE (Predictive Unified Learning System for Health Evaluation)</strong> is an advanced 
+            AI-powered clinical decision support system developed as a Final Year B.Tech Project. 
+            The system utilizes machine learning algorithms to predict the risk of three major chronic diseases:
+        </p>
+        <ul style='color: #cbd5e1; font-size: 1em; line-height: 1.8;'>
+            <li><strong style='color: #4ade80;'>❤️ Cardiovascular Disease:</strong> Predicts heart disease risk based on cardiac parameters</li>
+            <li><strong style='color: #4ade80;'>🩸 Diabetes Mellitus:</strong> Identifies Type 2 diabetes risk using metabolic indicators</li>
+            <li><strong style='color: #4ade80;'>🫘 Chronic Kidney Disease:</strong> Assesses renal function decline risk</li>
+        </ul>
+    </div>
+    """, unsafe_allow_html=True)
     
-    ### 🎓 Mentorship
-    * **Project Guide:** Prof. Dr. Datta Chavan 
-    * **Institution:** Bharati Vidyapeeth (Deemed to be University) College of Engineering, Pune.
-    """)
+    st.markdown("""
+    <div style='background: linear-gradient(135deg, #0d4f4a 0%, #0a3a35 100%); 
+                padding: 35px; border-radius: 15px; border: 2px solid #4ade80; margin-bottom: 30px;'>
+        <h3 style='color: #d1fae5; margin-top: 0; border-bottom: 3px solid #4ade80; padding-bottom: 15px;'>👥 Development Team</h3>
+        <div style='display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px;'>
+            <div style='background: rgba(74, 222, 128, 0.1); padding: 20px; border-radius: 10px; border-left: 4px solid #4ade80;'>
+                <p style='color: #d1fae5; font-weight: 700; margin: 0 0 5px 0; font-size: 1.1em;'>👨‍💻 Pranjal Sharma</p>
+                <p style='color: #a7f3d0; margin: 0; font-size: 0.95em;'>Lead Developer</p>
+            </div>
+            <div style='background: rgba(74, 222, 128, 0.1); padding: 20px; border-radius: 10px; border-left: 4px solid #4ade80;'>
+                <p style='color: #d1fae5; font-weight: 700; margin: 0 0 5px 0; font-size: 1.1em;'>👨‍💻 Vibhor Anshuman Roy</p>
+                <p style='color: #a7f3d0; margin: 0; font-size: 0.95em;'>ML Engineer</p>
+            </div>
+            <div style='background: rgba(74, 222, 128, 0.1); padding: 20px; border-radius: 10px; border-left: 4px solid #4ade80;'>
+                <p style='color: #d1fae5; font-weight: 700; margin: 0 0 5px 0; font-size: 1.1em;'>👨‍💻 Nagisetti Surya</p>
+                <p style='color: #a7f3d0; margin: 0; font-size: 0.95em;'>Data Scientist</p>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("""
+    <div style='background: linear-gradient(135deg, #4a2a1a 0%, #2a1810 100%); 
+                padding: 35px; border-radius: 15px; border: 2px solid #f59e0b;'>
+        <h3 style='color: #fbbf24; margin-top: 0; border-bottom: 3px solid #f59e0b; padding-bottom: 15px;'>🎓 Academic Institution</h3>
+        <p style='color: #fed7aa; font-size: 1.05em; font-weight: 600; margin-top: 0;'>
+            Department of Electrical & Computer Engineering
+        </p>
+        <p style='color: #fbbf24; font-size: 1.1em; font-weight: 700;'>
+            Bharati Vidyapeeth College of Engineering, Pune
+        </p>
+        <p style='color: #fed7aa; font-size: 0.95em; margin-top: 15px; line-height: 1.6;'>
+            PULSE represents the culmination of rigorous academic research, 
+            advanced machine learning implementations, and practical healthcare application design.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
 st.markdown("---")
-st.markdown("<p style='text-align:center; color:gray; font-size:small;'><b>PULSE</b> — B.Tech Final Year Project | Bharati Vidyapeeth COE Pune</p>", unsafe_allow_html=True)
+st.markdown("""
+<div style='background: linear-gradient(135deg, rgba(0, 212, 255, 0.1) 0%, rgba(74, 222, 128, 0.05) 100%); 
+            padding: 20px; border-radius: 10px; text-align: center; margin-top: 40px; border: 1px solid #00d4ff;'>
+    <p style='color: #e0f2fe; font-weight: 600; margin: 0;'>
+        💙 PULSE — B.Tech Final Year Project | Bharati Vidyapeeth COE Pune
+    </p>
+    <p style='color: #00ffff; font-size: 0.9em; margin: 5px 0 0 0;'>
+        Advanced Healthcare Technology for Better Diagnosis | Version 1.0
+    </p>
+</div>
+""", unsafe_allow_html=True)
