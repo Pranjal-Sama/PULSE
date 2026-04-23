@@ -9,6 +9,12 @@
 # ============================================================
 import pandas as pd
 import numpy as np
+
+# --- ADD THESE TWO LINES BEFORE IMPORTING PYPLOT ---
+import matplotlib
+matplotlib.use('Agg') # Forces non-interactive backend to prevent thread crashes
+# ---------------------------------------------------
+
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import seaborn as sns
