@@ -38,15 +38,18 @@ st.markdown("""
         padding: 30px 20px;
     }
     
-    [data-testid="stSidebar"] [data-testid="stImage"] {
-        border-radius: 50%;
-        padding: 10px;
-        background: rgba(0, 212, 255, 0.15);
-        border: 2px solid rgba(0, 212, 255, 0.3);
+   /* ===== CUSTOM GRADIENT BACKGROUND ===== */
+    [data-testid="stAppViewContainer"] {
+        background: linear-gradient(135deg, #0f172a 0%, #1a2744 100%);
     }
     
-    [data-testid="stSidebar"] .css-1d391kg {
-        color: #e0f2fe !important;
+    [data-testid="stHeader"] {
+        background: rgba(0,0,0,0); /* Makes the top header transparent */
+    }
+
+    body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        color: #e2e8f0;
     }
     
     /* ===== BUTTON STYLING ===== */
