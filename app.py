@@ -1257,8 +1257,44 @@ if page == "🩺 Risk Assessment":
             if "detected_city" not in st.session_state:
                 st.session_state.detected_city = None
 
+            # ==========================================
+            # 🟡 PRIMARY METHOD: Manual City Selection
+            # ==========================================
+            st.markdown("<div style='background-color: #134e4a; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #10b981;'>", unsafe_allow_html=True)
+            st.markdown("**✅ FASTEST METHOD: Select Your City Below**", help="Choose your city directly for instant doctor recommendations")
+            
+            selected_city = st.selectbox(
+                "📍 Select your city for doctor recommendations:",
+                options=["-- Select City --", "Mumbai", "Delhi", "Kolkata", "Pune", "New York"],
+                index=0,
+                key="city_selector"
+            )
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+            # Process manual city selection
+            if selected_city != "-- Select City --":
+                if st.button("🔍 Find Best Specialists in " + selected_city, key="manual_city_btn", use_container_width=True, type="primary"):
+                    with st.spinner(f"Fetching top specialists in {selected_city}..."):
+                        available_docs = MOCK_DOCTORS[selected_city].get(st.session_state.selected_disease, [])
+                        
+                        if available_docs:
+                            st.session_state.top_docs_df = rank_doctors(available_docs, top_n=3)
+                            st.session_state.detected_city = selected_city
+                            
+                            st.success(f"✅ **Found {len(st.session_state.top_docs_df)} top specialists in {selected_city}**\n\nRanked by experience, ratings, fees, and proximity to city center.")
+                            st.info(f"💡 The AI ranking engine has matched your health profile ({st.session_state.selected_disease}) with the best-rated specialists, using multi-criteria decision analysis.")
+                        else:
+                            st.warning(f"No specialists for {st.session_state.selected_disease} available in {selected_city} yet.")
+                            st.session_state.top_docs_df = None
+
+            # ==========================================
+            # 🟡 SECONDARY METHOD: Auto-Detection (Optional)
+            # ==========================================
+            st.markdown("<div style='background-color: #1a2744; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #3b82f6;'>", unsafe_allow_html=True)
+            st.markdown("**⚙️ ALTERNATIVE: Auto-Detect Your Location**", help="Uses GPS or IP-based geolocation as fallback")
+            
             # ✅ FIXED: unique key for this button
-            if st.button("📍 Detect Location & Run ML Recommendation Engine", key="doctor_loc_btn_unique", use_container_width=True):
+            if st.button("📡 Detect Location & Run ML Recommendation Engine", key="doctor_loc_btn_unique", use_container_width=True):
                 with st.spinner("Acquiring GPS/IP coordinates and calculating match scores..."):
                     detected_city, location_data = get_user_location()
                     
@@ -1290,6 +1326,8 @@ if page == "🩺 Risk Assessment":
                         city_str = detected_city if detected_city else "Unknown"
                         st.error(f"📍 Location detected as **{city_str}**, but it is outside our current database coverage.\n\n**Supported regions:** Mumbai, Kolkata, Delhi, Pune, New York")
                         st.session_state.top_docs_df = None
+            
+            st.markdown("</div>", unsafe_allow_html=True)
 
             if st.session_state.top_docs_df is not None:
                 currency_sym = "$" if st.session_state.detected_city == "New York" else "₹"
