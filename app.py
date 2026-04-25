@@ -14,6 +14,10 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
+# --- New Imports for Client-Side Geolocation ---
+import streamlit.components.v1 as components
+from components.location import get_nearest_city, reverse_geocode_coordinates
+
 # ==========================================
 # 🟢 1. PAGE CONFIG & CUSTOM CSS
 # ==========================================
@@ -26,23 +30,16 @@ st.set_page_config(
 
 st.markdown("""
     <style>
-    /* ===== GLOBAL STYLING & CLOUD BACKGROUND FIX ===== */
+    /* ===== GLOBAL STYLING ===== */
     * {
         margin: 0;
         padding: 0;
     }
     
     body {
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         color: #e2e8f0;
-    }
-
-    [data-testid="stAppViewContainer"] {
-        background: linear-gradient(135deg, #0f172a 0%, #1a2744 100%);
-    }
-    
-    [data-testid="stHeader"] {
-        background: rgba(0,0,0,0); /* Makes the top header transparent */
     }
     
     /* ===== SIDEBAR STYLING ===== */
@@ -61,8 +58,6 @@ st.markdown("""
     [data-testid="stSidebar"] .css-1d391kg {
         color: #e0f2fe !important;
     }
-    
-    /* ===== BUTTON STYLING ===== */
     
     /* ===== BUTTON STYLING ===== */
     .stButton>button { 
@@ -670,12 +665,82 @@ MOCK_DOCTORS = {
 }
 
 def get_user_location():
-    """Detects city based on IP."""
+    """
+    Get user's location using browser's Geolocation API via custom component.
+    Falls back to IP-based detection if geolocation fails.
+    Returns: (detected_city, location_data) tuple or (None, None)
+    """
+    html_code = """
+    <script>
+    const getLocation = () => {
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    const lat = position.coords.latitude;
+                    const lng = position.coords.longitude;
+                    window.parent.postMessage({
+                        type: "streamlit:setComponentValue",
+                        value: {lat: parseFloat(lat.toFixed(4)), lng: parseFloat(lng.toFixed(4))}
+                    }, "*");
+                },
+                (error) => {
+                    // Fallback to IP-based detection if geolocation denied
+                    console.log("Geolocation denied, falling back to IP detection");
+                    window.parent.postMessage({
+                        type: "streamlit:setComponentValue",
+                        value: null
+                    }, "*");
+                }
+            );
+        } else {
+            window.parent.postMessage({
+                type: "streamlit:setComponentValue",
+                value: null
+            }, "*");
+        }
+    };
+    
+    getLocation();
+    </script>
+    <div style="padding: 8px; text-align: center; color: #999; font-size: 11px; animation: pulse 1.5s ease-in-out infinite;">
+        📍 Requesting access to your location...
+    </div>
+    <style>
+    @keyframes pulse {
+        0%, 100% { opacity: 0.6; }
+        50% { opacity: 1; }
+    }
+    </style>
+    """
+    
+    location_data = components.html(html_code, height=45)
+    
+    # If HTML component returns coordinates, map to nearest city
+    if location_data and isinstance(location_data, dict) and 'lat' in location_data:
+        detected_city, distance_km = get_nearest_city(location_data['lat'], location_data['lng'])
+        if detected_city:
+            location_data['method'] = "Browser Geolocation"
+            location_data['distance_km'] = distance_km
+            return detected_city, location_data
+        else:
+            # Try reverse geocoding as additional check
+            reverse_city = reverse_geocode_coordinates(location_data['lat'], location_data['lng'])
+            if reverse_city:
+                detected_city, _ = get_nearest_city(location_data['lat'], location_data['lng'])
+                if detected_city:
+                    location_data['method'] = "Browser Geolocation + Reverse Geocoding"
+                    return detected_city, location_data
+    
+    # Fallback to IP-based detection
     try:
         response = requests.get("http://ip-api.com/json/", timeout=5).json()
-        return response.get("city")
+        city = response.get("city")
+        if city:
+            return city, {"method": "IP-based (fallback)", "ip": response.get("query")}
     except:
-        return None
+        pass
+    
+    return None, None
 
 def rank_doctors(doctor_list, top_n=3):
     """ML Multi-Criteria Decision Analysis using Min-Max Normalization."""
@@ -1129,20 +1194,35 @@ if page == "🩺 Risk Assessment":
             # ✅ FIXED: unique key for this button
             if st.button("📍 Detect Location & Run ML Recommendation Engine", key="doctor_loc_btn_unique", use_container_width=True):
                 with st.spinner("Acquiring GPS/IP coordinates and calculating match scores..."):
-                    detected_city = get_user_location()
+                    detected_city, location_data = get_user_location()
                     
-                    if detected_city in MOCK_DOCTORS:
+                    if detected_city and detected_city in MOCK_DOCTORS:
                         st.session_state.detected_city = detected_city
                         available_docs = MOCK_DOCTORS[detected_city].get(st.session_state.selected_disease, [])
                         
                         if available_docs:
                             st.session_state.top_docs_df = rank_doctors(available_docs, top_n=3)
-                            st.success(f"✅ Location verified: **{detected_city}**. Algorithm successfully ranked the top {len(st.session_state.top_docs_df)} specialists.")
+                            
+                            # Create detailed success message
+                            method = location_data.get("method", "Unknown") if location_data else "Unknown"
+                            distance_km = location_data.get("distance_km", "N/A") if location_data else "N/A"
+                            if isinstance(distance_km, float):
+                                distance_km = f"{distance_km:.1f} km"
+                            
+                            success_msg = f"✅ **Location verified: {detected_city}**\n\n"
+                            success_msg += f"📡 Detection Method: {method}\n"
+                            if distance_km != "N/A":
+                                success_msg += f"📍 Distance to city center: {distance_km}\n"
+                            success_msg += f"🏥 Found {len(st.session_state.top_docs_df)} top specialists"
+                            
+                            st.success(success_msg)
+                            st.info(f"💡 The AI ranking engine has matched your health profile ({st.session_state.selected_disease}) with the best-rated specialists near you, ranked by experience, ratings, fees, and proximity.")
                         else:
                             st.warning(f"Location verified as {detected_city}, but no specialists for {st.session_state.selected_disease} are available in this region yet.")
                             st.session_state.top_docs_df = None
                     else:
-                        st.error(f"📍 Location detected as **{detected_city}**, but it is outside our current database coverage (Mumbai, Kolkata, Delhi, New York, Pune).")
+                        city_str = detected_city if detected_city else "Unknown"
+                        st.error(f"📍 Location detected as **{city_str}**, but it is outside our current database coverage.\n\n**Supported regions:** Mumbai, Kolkata, Delhi, Pune, New York")
                         st.session_state.top_docs_df = None
 
             if st.session_state.top_docs_df is not None:
