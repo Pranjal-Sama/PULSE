@@ -26,16 +26,23 @@ st.set_page_config(
 
 st.markdown("""
     <style>
-    /* ===== GLOBAL STYLING ===== */
+    /* ===== GLOBAL STYLING & CLOUD BACKGROUND FIX ===== */
     * {
         margin: 0;
         padding: 0;
     }
     
     body {
-        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         color: #e2e8f0;
+    }
+
+    [data-testid="stAppViewContainer"] {
+        background: linear-gradient(135deg, #0f172a 0%, #1a2744 100%);
+    }
+    
+    [data-testid="stHeader"] {
+        background: rgba(0,0,0,0); /* Makes the top header transparent */
     }
     
     /* ===== SIDEBAR STYLING ===== */
@@ -54,6 +61,8 @@ st.markdown("""
     [data-testid="stSidebar"] .css-1d391kg {
         color: #e0f2fe !important;
     }
+    
+    /* ===== BUTTON STYLING ===== */
     
     /* ===== BUTTON STYLING ===== */
     .stButton>button { 
