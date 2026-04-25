@@ -16,7 +16,6 @@ from email.mime.multipart import MIMEMultipart
 
 # --- New Imports for Client-Side Geolocation ---
 import streamlit.components.v1 as components
-from components.location import get_nearest_city, reverse_geocode_coordinates
 
 # ==========================================
 # 🟢 1. PAGE CONFIG & CUSTOM CSS
@@ -581,7 +580,74 @@ def _build_ckd_recommendation(risk_pct, inputs):
     return {'risk_pct': round(risk_pct, 2), 'risk_label': label, 'advice_summary': summary, 'advice_detail': detail}
 
 # ==========================================
-# 🟢 7. DOCTOR DATABASE & ML RANKING ENGINE
+# 🟢 7. GEOLOCATION HELPER FUNCTIONS
+# ==========================================
+
+# Approximate coordinates for supported cities
+CITY_COORDS = {
+    "Mumbai": (19.0760, 72.8777),
+    "Delhi": (28.7041, 77.1025),
+    "Kolkata": (22.5726, 88.3639),
+    "Pune": (18.5204, 73.8567),
+    "New York": (40.7128, -74.0060),
+}
+
+def get_nearest_city(latitude, longitude):
+    """
+    Map coordinates to nearest supported city using Haversine distance formula.
+    Returns (city_name, distance_in_km) or (None, distance)
+    """
+    def haversine_distance(lat1, lon1, lat2, lon2):
+        """Calculate distance between two points on Earth in km."""
+        from math import radians, cos, sin, asin, sqrt
+        lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
+        dlon = lon2 - lon1
+        dlat = lat2 - lat1
+        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+        c = 2 * asin(sqrt(a))
+        km = 6371 * c
+        return km
+    
+    if latitude is None or longitude is None:
+        return None, None
+    
+    min_dist = float('inf')
+    nearest_city = None
+    
+    for city, (city_lat, city_lon) in CITY_COORDS.items():
+        dist_km = haversine_distance(latitude, longitude, city_lat, city_lon)
+        if dist_km < min_dist:
+            min_dist = dist_km
+            nearest_city = city
+    
+    # Only return city if within ~150 km coverage radius
+    if min_dist < 150:
+        return nearest_city, min_dist
+    
+    return None, min_dist
+
+def reverse_geocode_coordinates(latitude, longitude):
+    """
+    Use free reverse geocoding API (Nominatim) to get city name from coordinates.
+    Fallback method if city detection fails.
+    """
+    try:
+        url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={latitude}&lon={longitude}"
+        headers = {'User-Agent': 'PULSE-Health-App'}
+        response = requests.get(url, timeout=5, headers=headers)
+        
+        if response.status_code == 200:
+            data = response.json()
+            address = data.get('address', {})
+            city = address.get('city') or address.get('town') or address.get('village')
+            return city
+    except:
+        pass
+    
+    return None
+
+# ==========================================
+# 🟢 7b. DOCTOR DATABASE & ML RANKING ENGINE
 # ==========================================
 MOCK_DOCTORS = {
     "Mumbai": {
