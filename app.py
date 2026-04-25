@@ -8,6 +8,12 @@ import os
 from datetime import datetime
 from fpdf import FPDF
 
+# --- New Imports for Doctor DB & Email Integration ---
+import requests
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
 # ==========================================
 # 🟢 1. PAGE CONFIG & CUSTOM CSS
 # ==========================================
@@ -19,24 +25,17 @@ st.set_page_config(
 )
 
 st.markdown("""
-   <style>
-    /* ===== GLOBAL STYLING & CLOUD BACKGROUND FIX ===== */
+    <style>
+    /* ===== GLOBAL STYLING ===== */
     * {
         margin: 0;
         padding: 0;
     }
     
     body {
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         color: #e2e8f0;
-    }
-
-    [data-testid="stAppViewContainer"] {
-        background: linear-gradient(135deg, #0f172a 0%, #1a2744 100%);
-    }
-    
-    [data-testid="stHeader"] {
-        background: rgba(0,0,0,0); /* Makes the top header transparent */
     }
     
     /* ===== SIDEBAR STYLING ===== */
@@ -56,7 +55,6 @@ st.markdown("""
         color: #e0f2fe !important;
     }
     
-   
     /* ===== BUTTON STYLING ===== */
     .stButton>button { 
         width: 100%; 
@@ -271,17 +269,6 @@ st.markdown("""
         margin: 30px 0;
     }
     
-    /* ===== DATAFRAME STYLING ===== */
-    .streamlit-table {
-        border-radius: 10px;
-        overflow: hidden;
-        color: #cbd5e1 !important;
-    }
-    
-    .streamlit-table tr:hover {
-        background-color: rgba(0, 212, 255, 0.1) !important;
-    }
-    
     /* ===== CUSTOM GRADIENT BACKGROUND ===== */
     .main {
         background: linear-gradient(135deg, #0f172a 0%, #1a2744 100%);
@@ -300,6 +287,11 @@ st.markdown("""
     ul li {
         color: #cbd5e1 !important;
     }
+    
+    /* ===== TABS STYLING ===== */
+    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
+    .stTabs [data-baseweb="tab"] { height: 50px; white-space: pre-wrap; background-color: #0f172a; border-radius: 10px 10px 0 0; padding: 10px 20px; border: 1px solid #00d4ff; border-bottom: none; }
+    .stTabs [aria-selected="true"] { background: linear-gradient(135deg, #0099cc 0%, #00d4ff 100%); color: #0f172a !important; font-weight: bold; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -328,7 +320,6 @@ def save_patient_record(patient_id, module, risk_score):
 # 🟢 3. PDF GENERATION ENGINE
 # ==========================================
 def create_pdf_report(patient_id, disease, risk_pct, risk_label, summary, details):
-    # FPDF cannot handle emojis. This helper completely strips them out.
     def clean_text(text):
         return str(text).encode('latin-1', 'ignore').decode('latin-1').strip()
         
@@ -586,7 +577,172 @@ def _build_ckd_recommendation(risk_pct, inputs):
     return {'risk_pct': round(risk_pct, 2), 'risk_label': label, 'advice_summary': summary, 'advice_detail': detail}
 
 # ==========================================
-# 🟢 7. SIDEBAR & NAVIGATION
+# 🟢 7. DOCTOR DATABASE & ML RANKING ENGINE
+# ==========================================
+MOCK_DOCTORS = {
+    "Mumbai": {
+        "❤️ Heart Disease": [
+            {"name": "Dr. Anil Shah", "exp_yrs": 25, "rating": 4.8, "fee": 2500, "dist_km": 4.2, "address": "Breach Candy, Mumbai", "time": "10 AM - 4 PM"},
+            {"name": "Dr. Riya Mehta", "exp_yrs": 12, "rating": 4.6, "fee": 1500, "dist_km": 8.5, "address": "Andheri West, Mumbai", "time": "5 PM - 9 PM"},
+            {"name": "Dr. Vikram Joshi", "exp_yrs": 30, "rating": 4.9, "fee": 3000, "dist_km": 12.0, "address": "Bandra, Mumbai", "time": "9 AM - 1 PM"}
+        ],
+        "🩸 Diabetes": [
+            {"name": "Dr. Sneha Patil", "exp_yrs": 18, "rating": 4.7, "fee": 1200, "dist_km": 3.1, "address": "Dadar, Mumbai", "time": "11 AM - 3 PM"},
+            {"name": "Dr. Karan Desai", "exp_yrs": 8, "rating": 4.4, "fee": 800, "dist_km": 15.0, "address": "Borivali, Mumbai", "time": "4 PM - 8 PM"},
+            {"name": "Dr. Meena Iyer", "exp_yrs": 22, "rating": 4.8, "fee": 1800, "dist_km": 6.4, "address": "Juhu, Mumbai", "time": "10 AM - 2 PM"}
+        ],
+        "🫘 Chronic Kidney Disease": [
+            {"name": "Dr. Rajiv Menon", "exp_yrs": 20, "rating": 4.7, "fee": 2200, "dist_km": 7.8, "address": "Powai, Mumbai", "time": "12 PM - 6 PM"},
+            {"name": "Dr. Anjali Verma", "exp_yrs": 15, "rating": 4.5, "fee": 1600, "dist_km": 9.2, "address": "Goregaon, Mumbai", "time": "9 AM - 1 PM"}
+        ]
+    },
+    "Kolkata": {
+        "❤️ Heart Disease": [
+            {"name": "Dr. Amitava Sen", "exp_yrs": 28, "rating": 4.9, "fee": 2000, "dist_km": 5.5, "address": "Salt Lake Sector V, Kolkata", "time": "10 AM - 2 PM"},
+            {"name": "Dr. B. Biswas", "exp_yrs": 14, "rating": 4.5, "fee": 1000, "dist_km": 11.2, "address": "Park Street, Kolkata", "time": "4 PM - 8 PM"},
+            {"name": "Dr. S. Mukherjee", "exp_yrs": 20, "rating": 4.7, "fee": 1500, "dist_km": 3.0, "address": "Gariahat, Kolkata", "time": "11 AM - 5 PM"}
+        ],
+        "🩸 Diabetes": [
+            {"name": "Dr. Tanya Das", "exp_yrs": 16, "rating": 4.8, "fee": 1200, "dist_km": 8.1, "address": "Ballygunge, Kolkata", "time": "9 AM - 1 PM"},
+            {"name": "Dr. Rahul Roy", "exp_yrs": 10, "rating": 4.3, "fee": 800, "dist_km": 14.5, "address": "Dum Dum, Kolkata", "time": "5 PM - 9 PM"}
+        ],
+        "🫘 Chronic Kidney Disease": [
+            {"name": "Dr. Pratik Saha", "exp_yrs": 24, "rating": 4.8, "fee": 1800, "dist_km": 6.7, "address": "New Town, Kolkata", "time": "10 AM - 4 PM"},
+            {"name": "Dr. M. Banerjee", "exp_yrs": 12, "rating": 4.6, "fee": 1100, "dist_km": 4.2, "address": "Howrah, Kolkata", "time": "3 PM - 7 PM"}
+        ]
+    },
+    "Delhi": {
+        "❤️ Heart Disease": [
+            {"name": "Dr. R.K. Sharma", "exp_yrs": 32, "rating": 4.9, "fee": 3000, "dist_km": 9.5, "address": "Vasant Kunj, Delhi", "time": "10 AM - 4 PM"},
+            {"name": "Dr. Nidhi Gupta", "exp_yrs": 15, "rating": 4.6, "fee": 1800, "dist_km": 4.1, "address": "Lajpat Nagar, Delhi", "time": "9 AM - 2 PM"},
+            {"name": "Dr. Vikas Singh", "exp_yrs": 9, "rating": 4.2, "fee": 1000, "dist_km": 18.0, "address": "Rohini, Delhi", "time": "4 PM - 8 PM"}
+        ],
+        "🩸 Diabetes": [
+            {"name": "Dr. Alok Verma", "exp_yrs": 21, "rating": 4.8, "fee": 1500, "dist_km": 7.2, "address": "Connaught Place, Delhi", "time": "11 AM - 5 PM"},
+            {"name": "Dr. Sunita Rao", "exp_yrs": 14, "rating": 4.5, "fee": 1200, "dist_km": 12.3, "address": "Dwarka, Delhi", "time": "9 AM - 1 PM"},
+            {"name": "Dr. Aman Khurana", "exp_yrs": 7, "rating": 4.1, "fee": 700, "dist_km": 5.0, "address": "Karol Bagh, Delhi", "time": "5 PM - 9 PM"}
+        ],
+        "🫘 Chronic Kidney Disease": [
+            {"name": "Dr. D. Malhotra", "exp_yrs": 28, "rating": 4.9, "fee": 2500, "dist_km": 10.1, "address": "Saket, Delhi", "time": "10 AM - 3 PM"},
+            {"name": "Dr. Pooja Chawla", "exp_yrs": 17, "rating": 4.7, "fee": 1600, "dist_km": 6.8, "address": "South Ex, Delhi", "time": "4 PM - 8 PM"}
+        ]
+    },
+    "New York": {
+        "❤️ Heart Disease": [
+            {"name": "Dr. James Wilson", "exp_yrs": 26, "rating": 4.9, "fee": 400, "dist_km": 3.2, "address": "Manhattan, NY", "time": "9 AM - 3 PM"},
+            {"name": "Dr. Sarah Lee", "exp_yrs": 14, "rating": 4.7, "fee": 250, "dist_km": 12.5, "address": "Brooklyn, NY", "time": "10 AM - 4 PM"},
+            {"name": "Dr. Michael Chen", "exp_yrs": 8, "rating": 4.4, "fee": 150, "dist_km": 8.1, "address": "Queens, NY", "time": "1 PM - 7 PM"}
+        ],
+        "🩸 Diabetes": [
+            {"name": "Dr. Emily Davis", "exp_yrs": 19, "rating": 4.8, "fee": 300, "dist_km": 4.5, "address": "Upper East Side, NY", "time": "8 AM - 2 PM"},
+            {"name": "Dr. Robert Taylor", "exp_yrs": 11, "rating": 4.5, "fee": 200, "dist_km": 15.0, "address": "Staten Island, NY", "time": "12 PM - 6 PM"}
+        ],
+        "🫘 Chronic Kidney Disease": [
+            {"name": "Dr. William Martinez", "exp_yrs": 30, "rating": 4.9, "fee": 450, "dist_km": 6.0, "address": "Midtown, NY", "time": "10 AM - 5 PM"},
+            {"name": "Dr. Laura White", "exp_yrs": 16, "rating": 4.6, "fee": 280, "dist_km": 11.2, "address": "Bronx, NY", "time": "9 AM - 1 PM"}
+        ]
+    },
+    "Pune": {
+         "❤️ Heart Disease": [
+            {"name": "Dr. S. Patil", "exp_yrs": 12, "rating": 4.7, "fee": 700, "dist_km": 5.2, "address": "Kothrud, Pune", "time": "9 AM - 1 PM"},
+            {"name": "Dr. Amit Deshmukh", "exp_yrs": 22, "rating": 4.9, "fee": 1500, "dist_km": 12.0, "address": "Baner, Pune", "time": "10 AM - 5 PM"},
+            {"name": "Dr. Neha Sharma", "exp_yrs": 8, "rating": 4.5, "fee": 500, "dist_km": 2.1, "address": "Shivajinagar, Pune", "time": "4 PM - 8 PM"}
+        ],
+        "🩸 Diabetes": [
+            {"name": "Dr. Priya Kadam", "exp_yrs": 15, "rating": 4.6, "fee": 900, "dist_km": 6.0, "address": "Hinjewadi, Pune", "time": "5 PM - 9 PM"},
+            {"name": "Dr. R. K. Joshi", "exp_yrs": 18, "rating": 4.8, "fee": 1200, "dist_km": 8.5, "address": "Viman Nagar, Pune", "time": "11 AM - 3 PM"},
+            {"name": "Dr. Aniket More", "exp_yrs": 6, "rating": 4.2, "fee": 400, "dist_km": 14.1, "address": "Wakad, Pune", "time": "10 AM - 2 PM"}
+        ],
+        "🫘 Chronic Kidney Disease": [
+            {"name": "Dr. V. Kulkarni", "exp_yrs": 25, "rating": 4.9, "fee": 1800, "dist_km": 4.4, "address": "Deccan Gymkhana, Pune", "time": "10 AM - 4 PM"},
+            {"name": "Dr. Shruti Awate", "exp_yrs": 13, "rating": 4.7, "fee": 1000, "dist_km": 9.9, "address": "Kharadi, Pune", "time": "4 PM - 8 PM"}
+        ]
+    }
+}
+
+def get_user_location():
+    """Detects city based on IP."""
+    try:
+        response = requests.get("http://ip-api.com/json/", timeout=5).json()
+        return response.get("city")
+    except:
+        return None
+
+def rank_doctors(doctor_list, top_n=3):
+    """ML Multi-Criteria Decision Analysis using Min-Max Normalization."""
+    if not doctor_list:
+        return pd.DataFrame()
+        
+    df = pd.DataFrame(doctor_list)
+    
+    df['n_rating'] = (df['rating'] - df['rating'].min()) / (df['rating'].max() - df['rating'].min() + 0.001)
+    df['n_exp'] = (df['exp_yrs'] - df['exp_yrs'].min()) / (df['exp_yrs'].max() - df['exp_yrs'].min() + 0.001)
+    df['n_fee'] = 1 - ((df['fee'] - df['fee'].min()) / (df['fee'].max() - df['fee'].min() + 0.001))
+    df['n_dist'] = 1 - ((df['dist_km'] - df['dist_km'].min()) / (df['dist_km'].max() - df['dist_km'].min() + 0.001))
+    
+    df['ml_score'] = (df['n_rating'] * 0.40) + (df['n_exp'] * 0.30) + (df['n_fee'] * 0.15) + (df['n_dist'] * 0.15)
+    df['match_pct'] = (df['ml_score'] * 100).round(1)
+    
+    return df.sort_values(by='ml_score', ascending=False).head(top_n)
+
+def send_gmail_report(user_email, top_doctors_df, disease, patient_id, city):
+    """Sends the formatted HTML report via SMTP."""
+    SENDER_EMAIL = "royvibhor082@gmail.com" 
+    SENDER_APP_PASSWORD = "rfgf xxiw egjk mnfg" 
+    
+    msg = MIMEMultipart("alternative")
+    msg['Subject'] = f"PULSE Medical Alert & Doctor Recommendations - {patient_id}"
+    msg['From'] = SENDER_EMAIL
+    msg['To'] = user_email
+
+    html = f"""
+    <html>
+      <body style="font-family: Arial, sans-serif; color: #333;">
+        <h2 style="color: #00d4ff; background-color: #0f172a; padding: 10px;">PULSE System - Automated Clinical Report</h2>
+        <p>Based on your recent assessment for <strong>{disease}</strong>, our AI ranking system has identified the top specialists near your detected location in <strong>{city}</strong>.</p>
+        <hr>
+        <h3>Top Recommended Specialists:</h3>
+    """
+    
+    for _, doc in top_doctors_df.iterrows():
+        currency = "$" if city == "New York" else "₹"
+        html += f"""
+        <div style="background-color: #f8fafc; padding: 15px; margin-bottom: 10px; border-left: 5px solid #00d4ff;">
+            <h4 style="margin: 0; color: #0f172a;">Dr. {doc['name']} <span style="color: #4ade80;">({doc['match_pct']}% Match)</span></h4>
+            <ul style="margin-top: 10px;">
+                <li><strong>Rating:</strong> {doc['rating']}/5.0</li>
+                <li><strong>Experience:</strong> {doc['exp_yrs']} Years</li>
+                <li><strong>Consultation Fee:</strong> {currency}{doc['fee']}</li>
+                <li><strong>Distance:</strong> {doc['dist_km']} km</li>
+                <li><strong>Clinic:</strong> {doc['address']}</li>
+                <li><strong>Timings:</strong> {doc['time']}</li>
+            </ul>
+        </div>
+        """
+        
+    html += """
+        <p style="font-size: 12px; color: #777; margin-top: 20px;">
+           <em>Disclaimer: PULSE is a screening tool. This is an automated email generated by the PULSE Final Year Project System.</em>
+        </p>
+      </body>
+    </html>
+    """
+    
+    msg.attach(MIMEText(html, "html"))
+
+    try:
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(SENDER_EMAIL, SENDER_APP_PASSWORD)
+        server.sendmail(SENDER_EMAIL, user_email, msg.as_string())
+        server.quit()
+        return True
+    except Exception as e:
+        print(f"Email Error: {e}")
+        return False
+
+# ==========================================
+# 🟢 8. SIDEBAR & NAVIGATION
 # ==========================================
 with st.sidebar:
     st.markdown("<div style='text-align: center; padding: 20px;'><img src='https://cdn-icons-png.flaticon.com/512/2966/2966327.png' width='100' style='border-radius: 50%; background: rgba(255,255,255,0.1); padding: 15px;'></div>", unsafe_allow_html=True)
@@ -646,18 +802,15 @@ if page == "🩺 Risk Assessment":
         "PATIENT-001",
         help="Enter a unique identifier for this patient record"
     )
-    
-    submitted = False
-    result = None
-    model_used = None
-    features_used = None
-    X_live = None
-    X_scaled = None
-    raw_inputs = {}
 
+    # -------------------------------------------------------
+    # ✅ FIXED FORM — ONE submit button at the bottom
+    # -------------------------------------------------------
     with st.form("pulse_form"):
         st.markdown("<h3 style='color: #00ffff; border-bottom: 3px solid #00d4ff; padding-bottom: 10px;'>📋 Patient Physiological Parameters</h3>", unsafe_allow_html=True)
         
+        raw_inputs = {}  # initialise so it always exists
+
         # ---------------------------------------------------------
         # HEART DISEASE FORM
         # ---------------------------------------------------------
@@ -682,20 +835,20 @@ if page == "🩺 Risk Assessment":
                 oldpeak = st.number_input("ST Depression (oldpeak)", 0.0, 6.0, 1.0, step=0.1)
 
             st.markdown("<p style='color: #00ffff; font-weight: 600; margin-top: 20px; font-size: 1.1em;'>🔬 Advanced Cardiac Indicators</p>", unsafe_allow_html=True)
-            c4, c5, c6 = st.columns(3)
+            c4, c5 = st.columns(2)
             with c4:
                 restecg = st.selectbox("Resting ECG", [0,1,2])
                 slope = st.selectbox("Slope of ST Segment", [0,1,2])
             with c5:
                 ca = st.selectbox("Major Vessels (Fluoroscopy)", [0,1,2,3])
                 thal = st.selectbox("Thalassemia", [1,2,3])
-            with c6:
-                st.write("")
-                st.write("")
-                submitted = st.form_submit_button("🚀 Analyze Heart Risk", use_container_width=True)
-            
-            if submitted:
-                raw_inputs = {'age': age, 'sex': sex, 'cp': cp, 'trestbps': trestbps, 'chol': chol, 'fbs': fbs, 'restecg': restecg, 'thalach': thalach, 'exang': exang, 'oldpeak': oldpeak, 'slope': slope, 'ca': ca, 'thal': thal}
+
+            # store inputs so they are available after submit
+            raw_inputs = {
+                'age': age, 'sex': sex, 'cp': cp, 'trestbps': trestbps,
+                'chol': chol, 'fbs': fbs, 'restecg': restecg, 'thalach': thalach,
+                'exang': exang, 'oldpeak': oldpeak, 'slope': slope, 'ca': ca, 'thal': thal
+            }
 
         # ---------------------------------------------------------
         # DIABETES FORM
@@ -718,12 +871,12 @@ if page == "🩺 Risk Assessment":
                 pregnancies = st.number_input("Pregnancies", 0, 20, 0)
                 skin = st.number_input("Triceps Skin Fold (mm)", 0, 100, 20)
                 pedigree = st.number_input("Diabetes Pedigree Function", 0.0, 3.0, 0.4, step=0.05)
-            
-            st.markdown("---")
-            submitted = st.form_submit_button("🚀 Analyze Diabetes Risk", use_container_width=True)
-            
-            if submitted:
-                raw_inputs = {'Pregnancies': pregnancies, 'Glucose': glucose, 'BloodPressure': bp, 'SkinThickness': skin, 'Insulin': insulin, 'BMI': bmi, 'DiabetesPedigreeFunction': pedigree, 'Age': age}
+
+            raw_inputs = {
+                'Pregnancies': pregnancies, 'Glucose': glucose, 'BloodPressure': bp,
+                'SkinThickness': skin, 'Insulin': insulin, 'BMI': bmi,
+                'DiabetesPedigreeFunction': pedigree, 'Age': age
+            }
 
         # ---------------------------------------------------------
         # CKD FORM
@@ -751,25 +904,27 @@ if page == "🩺 Risk Assessment":
                 hemo = st.number_input("Hemoglobin Levels (g/dL)", 5.0, 20.0, 14.0)
                 fatigue = st.selectbox("Fatigue Levels", [0, 1, 2, 3, 4, 5])
 
-            st.markdown("---")
-            submitted = st.form_submit_button("🚀 Analyze CKD Risk", use_container_width=True)
-            
-            if submitted:
-                raw_inputs = {
-                    'Age': age, 'SystolicBP': sys_bp, 'DiastolicBP': dias_bp, 'GFR': gfr,
-                    'SerumCreatinine': creatinine, 'BUNLevels': bun, 'HbA1c': hba1c, 
-                    'ProteinInUrine': protein, 'BMI': bmi, 'SerumElectrolytesSodium': sodium,
-                    'HemoglobinLevels': hemo, 'FatigueLevels': fatigue
-                }
+            raw_inputs = {
+                'Age': age, 'SystolicBP': sys_bp, 'DiastolicBP': dias_bp, 'GFR': gfr,
+                'SerumCreatinine': creatinine, 'BUNLevels': bun, 'HbA1c': hba1c,
+                'ProteinInUrine': protein, 'BMI': bmi, 'SerumElectrolytesSodium': sodium,
+                'HemoglobinLevels': hemo, 'FatigueLevels': fatigue
+            }
+
+        # ---------------------------------------------------------
+        # ✅ ONE SINGLE SUBMIT BUTTON FOR ALL THREE DISEASE FORMS
+        # ---------------------------------------------------------
+        st.markdown("---")
+        submitted = st.form_submit_button("🚀 Run PULSE Analysis", use_container_width=True)
 
     # ---------------------------------------------------------
-    # PROCESSING LOGIC & DISPLAY RESULTS
+    # PROCESSING LOGIC & DISPLAY RESULTS (STATE MANAGED)
     # ---------------------------------------------------------
-    if submitted:
-        # 1. Trigger Automated Alerts
-        alerts = check_clinical_alerts(selected_disease, raw_inputs)
-        for alert in alerts:
-            st.markdown(f"<div class='alert-box'>🚨 <b>{alert}</b></div>", unsafe_allow_html=True)
+    if submitted and raw_inputs:
+        st.session_state.assessment_complete = True
+        st.session_state.patient_id = patient_id
+        st.session_state.selected_disease = selected_disease
+        st.session_state.alerts = check_clinical_alerts(selected_disease, raw_inputs)
 
         with st.spinner("Running PULSE Engine..."):
             df_input = pd.DataFrame([raw_inputs])
@@ -786,7 +941,7 @@ if page == "🩺 Risk Assessment":
                 X_live = df_input[heart_features]
                 X_scaled = heart_scaler.transform(X_live)
                 prob = heart_model.predict_proba(X_scaled)[0][1] * 100
-                result = _build_heart_recommendation(prob, raw_inputs)
+                st.session_state.result = _build_heart_recommendation(prob, raw_inputs)
                 model_used, features_used = heart_model, heart_features
 
             elif selected_disease == "🩸 Diabetes":
@@ -800,7 +955,7 @@ if page == "🩺 Risk Assessment":
                 X_live = df_input[diab_features]
                 X_scaled = diab_scaler.transform(X_live)
                 prob = diab_model.predict_proba(X_scaled)[0][1] * 100
-                result = _build_diabetes_recommendation(prob, raw_inputs)
+                st.session_state.result = _build_diabetes_recommendation(prob, raw_inputs)
                 model_used, features_used = diab_model, diab_features
 
             elif selected_disease == "🫘 Chronic Kidney Disease":
@@ -814,68 +969,10 @@ if page == "🩺 Risk Assessment":
                 X_live = df_input[ckd_features]
                 X_scaled = ckd_scaler.transform(X_live)
                 prob = ckd_model.predict_proba(X_scaled)[0][1] * 100
-                result = _build_ckd_recommendation(prob, raw_inputs)
+                st.session_state.result = _build_ckd_recommendation(prob, raw_inputs)
                 model_used, features_used = ckd_model, ckd_features
 
-        # 2. Database Save
-        save_patient_record(patient_id, selected_disease, prob)
-        st.toast(f"✅ Record saved for {patient_id}")
-
-        # 3. Render Dashboard
-        st.markdown("---")
-        st.markdown("""
-        <div style='background: linear-gradient(135deg, #0099cc 0%, #00d4ff 100%); padding: 30px; border-radius: 15px; margin-bottom: 30px;'>
-            <h2 style='color: #0f172a; margin: 0; text-align: center; font-size: 2em;'>📋 PULSE Diagnostic Report</h2>
-            <p style='color: #0f172a; text-align: center; margin-top: 10px; font-weight: 600;'>Comprehensive Risk Assessment & Clinical Insights</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        col_left, col_right = st.columns([1, 2])
-
-        with col_left:
-            st.markdown("<h3 style='color: #00ffff; border-bottom: 3px solid #00d4ff; padding-bottom: 10px;'>📊 Risk Score</h3>", unsafe_allow_html=True)
-            
-            # Display risk metric with custom styling
-            st.markdown(f"""
-            <div style='background: linear-gradient(135deg, #0f172a 0%, #1a2744 100%); 
-                        padding: 25px; border-radius: 15px; border: 2px solid #00d4ff; text-align: center;'>
-                <p style='margin: 0; color: #e0f2fe; font-size: 0.9em; font-weight: 600;'>Calculated Risk Probability</p>
-                <h1 style='margin: 15px 0; color: #00ffff; font-size: 3em; background: none; -webkit-text-fill-color: unset; text-shadow: 0 0 20px rgba(0, 212, 255, 0.4);'>
-                    {result['risk_pct']:.1f}%
-                </h1>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            if "LOW RISK" in result['risk_label']: st.markdown(f"<div class='risk-low'>{result['risk_label']}</div>", unsafe_allow_html=True)
-            elif "MEDIUM RISK" in result['risk_label']: st.markdown(f"<div class='risk-med'>{result['risk_label']}</div>", unsafe_allow_html=True)
-            else: st.markdown(f"<div class='risk-high'>{result['risk_label']}</div>", unsafe_allow_html=True)
-            
-            st.markdown("<div style='margin: 20px 0;'></div>", unsafe_allow_html=True)
-            st.progress(min(result['risk_pct'] / 100, 1.0))
-            st.markdown("<div style='margin: 20px 0;'></div>", unsafe_allow_html=True)
-
-            # Provide PDF Download
-            pdf_bytes = create_pdf_report(patient_id, selected_disease, result['risk_pct'], result['risk_label'], result['advice_summary'], result['advice_detail'])
-            st.download_button(label="📥 Download Clinical PDF Report",
-                               data=pdf_bytes,
-                               file_name=f"PULSE_Report_{patient_id}.pdf",
-                               mime="application/pdf",
-                               use_container_width=True)
-
-        with col_right:
-            st.markdown("<h3 style='color: #00ffff; border-bottom: 3px solid #00d4ff; padding-bottom: 10px;'>💡 Actionable Intelligence</h3>", unsafe_allow_html=True)
-            st.info(result['advice_summary'])
-            st.markdown("---")
-            for category, tips in result['advice_detail'].items():
-                with st.expander(f"**{category}**", expanded=True):
-                    for tip in tips: st.write(f"• {tip}")
-        
-        # 4. User-Friendly SHAP Breakdown
-        st.markdown("---")
-        st.markdown("<h3 style='color: #00ffff; border-bottom: 3px solid #00d4ff; padding-bottom: 10px;'>🔍 Patient-Specific Risk Breakdown</h3>", unsafe_allow_html=True)
-        st.write("Based on our AI analysis, here are the specific factors driving this patient's risk score.")
-        
-        with st.spinner("Analyzing risk factors..."):
+            # Pre-compute SHAP values
             try:
                 explainer = shap.Explainer(model_used)
                 shap_values = explainer(X_scaled)
@@ -894,41 +991,191 @@ if page == "🩺 Risk Assessment":
                 shap_df['Abs_Impact'] = shap_df['Impact'].abs()
                 shap_df = shap_df.sort_values(by='Abs_Impact', ascending=False)
                 
-                risk_drivers = shap_df[shap_df['Impact'] > 0].head(4)
-                protectors = shap_df[shap_df['Impact'] < 0].head(4)
+                st.session_state.risk_drivers = shap_df[shap_df['Impact'] > 0].head(4)
+                st.session_state.protectors = shap_df[shap_df['Impact'] < 0].head(4)
+            except Exception:
+                st.session_state.risk_drivers = None
+                st.session_state.protectors = None
 
-                c_risk, c_safe = st.columns(2)
+        save_patient_record(patient_id, selected_disease, prob)
+        st.toast(f"✅ Record saved for {patient_id}")
+
+    # ==========================================
+    # 🟢 RENDER DASHBOARD
+    # ==========================================
+    if st.session_state.get('assessment_complete', False):
+        
+        for alert in st.session_state.alerts:
+            st.markdown(f"<div class='alert-box'>🚨 <b>{alert}</b></div>", unsafe_allow_html=True)
+            
+        st.markdown("---")
+        st.markdown("""
+        <div style='background: linear-gradient(135deg, #0099cc 0%, #00d4ff 100%); padding: 30px; border-radius: 15px; margin-bottom: 20px;'>
+            <h2 style='color: #0f172a; margin: 0; text-align: center; font-size: 2em;'>📋 PULSE Diagnostic Report</h2>
+            <p style='color: #0f172a; text-align: center; margin-top: 10px; font-weight: 600;'>Comprehensive Risk Assessment & Clinical Insights</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        result = st.session_state.result
+        
+        tab_report, tab_shap, tab_doctors = st.tabs([
+            "📑 Clinical Assessment", 
+            "🔍 AI Risk Breakdown", 
+            "🏥 AI Specialists & Email Dispatch"
+        ])
+
+        with tab_report:
+            col_left, col_right = st.columns([1, 2])
+
+            with col_left:
+                st.markdown("<h3 style='color: #00ffff; border-bottom: 3px solid #00d4ff; padding-bottom: 10px;'>📊 Risk Score</h3>", unsafe_allow_html=True)
                 
+                st.markdown(f"""
+                <div style='background: linear-gradient(135deg, #0f172a 0%, #1a2744 100%); 
+                            padding: 25px; border-radius: 15px; border: 2px solid #00d4ff; text-align: center;'>
+                    <p style='margin: 0; color: #e0f2fe; font-size: 0.9em; font-weight: 600;'>Calculated Risk Probability</p>
+                    <h1 style='margin: 15px 0; color: #00ffff; font-size: 3em; background: none; -webkit-text-fill-color: unset; text-shadow: 0 0 20px rgba(0, 212, 255, 0.4);'>
+                        {result['risk_pct']:.1f}%
+                    </h1>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                if "LOW RISK" in result['risk_label']: st.markdown(f"<div class='risk-low'>{result['risk_label']}</div>", unsafe_allow_html=True)
+                elif "MEDIUM RISK" in result['risk_label']: st.markdown(f"<div class='risk-med'>{result['risk_label']}</div>", unsafe_allow_html=True)
+                else: st.markdown(f"<div class='risk-high'>{result['risk_label']}</div>", unsafe_allow_html=True)
+                
+                st.markdown("<div style='margin: 20px 0;'></div>", unsafe_allow_html=True)
+                st.progress(min(result['risk_pct'] / 100, 1.0))
+                st.markdown("<div style='margin: 20px 0;'></div>", unsafe_allow_html=True)
+
+                pdf_bytes = create_pdf_report(
+                    st.session_state.patient_id,
+                    st.session_state.selected_disease,
+                    result['risk_pct'],
+                    result['risk_label'],
+                    result['advice_summary'],
+                    result['advice_detail']
+                )
+                st.download_button(
+                    label="📥 Download Clinical PDF Report",
+                    data=pdf_bytes,
+                    file_name=f"PULSE_Report_{st.session_state.patient_id}.pdf",
+                    mime="application/pdf",
+                    key="pdf_download_btn"
+                )
+
+            with col_right:
+                st.markdown("<h3 style='color: #00ffff; border-bottom: 3px solid #00d4ff; padding-bottom: 10px;'>💡 Actionable Intelligence</h3>", unsafe_allow_html=True)
+                st.info(result['advice_summary'])
+                st.markdown("---")
+                for category, tips in result['advice_detail'].items():
+                    with st.expander(f"**{category}**", expanded=False):
+                        for tip in tips: st.write(f"• {tip}")
+
+        with tab_shap:
+            st.markdown("<h3 style='color: #00ffff; border-bottom: 3px solid #00d4ff; padding-bottom: 10px;'>🔍 Patient-Specific Risk Breakdown</h3>", unsafe_allow_html=True)
+            st.write("Based on our AI analysis, here are the specific factors driving this patient's risk score.")
+            
+            if st.session_state.get('risk_drivers') is not None:
+                c_risk, c_safe = st.columns(2)
                 with c_risk:
                     st.markdown("""
                     <div style='background: linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%); padding: 20px; 
-                                border-radius: 12px; border-left: 5px solid #ff6b6b;'>
-                        <p style='color: #fecaca; font-weight: 600; margin: 0 0 15px 0;'>🚨 Top Risk Drivers</p>
+                                border-radius: 12px; border-left: 5px solid #ff6b6b; margin-bottom: 15px;'>
+                        <p style='color: #fecaca; font-weight: 600; margin: 0 0 5px 0;'>🚨 Top Risk Drivers</p>
                         <p style='color: #fed7aa; font-size: 0.9em; margin: 0;'><i>Factors pushing the risk HIGHER</i></p>
                     </div>
                     """, unsafe_allow_html=True)
-                    if risk_drivers.empty:
+                    if st.session_state.risk_drivers.empty:
                         st.write("✓ No major risk drivers detected.")
                     else:
-                        for _, row in risk_drivers.iterrows():
-                            st.write(f"🔺 **{row['Feature']}**  \nValue: {row['Patient_Value']:.2f}")
+                        for _, row in st.session_state.risk_drivers.iterrows():
+                            st.write(f"🔺 **{row['Feature']}** (Value: {row['Patient_Value']:.2f})")
 
                 with c_safe:
                     st.markdown("""
                     <div style='background: linear-gradient(135deg, #134e4a 0%, #0d3830 100%); padding: 20px; 
-                                border-radius: 12px; border-left: 5px solid #4ade80;'>
-                        <p style='color: #d1fae5; font-weight: 600; margin: 0 0 15px 0;'>🛡️ Top Protective Factors</p>
+                                border-radius: 12px; border-left: 5px solid #4ade80; margin-bottom: 15px;'>
+                        <p style='color: #d1fae5; font-weight: 600; margin: 0 0 5px 0;'>🛡️ Top Protective Factors</p>
                         <p style='color: #a7f3d0; font-size: 0.9em; margin: 0;'><i>Factors keeping the risk LOWER</i></p>
                     </div>
                     """, unsafe_allow_html=True)
-                    if protectors.empty:
+                    if st.session_state.protectors.empty:
                         st.write("✓ No major protective factors detected.")
                     else:
-                        for _, row in protectors.iterrows():
-                            st.write(f"🔽 **{row['Feature']}**  \nValue: {row['Patient_Value']:.2f}")
-
-            except Exception as e:
+                        for _, row in st.session_state.protectors.iterrows():
+                            st.write(f"🔽 **{row['Feature']}** (Value: {row['Patient_Value']:.2f})")
+            else:
                 st.warning("⚠️ Risk breakdown is currently optimized for Tree-based models.")
+
+        with tab_doctors:
+            st.markdown("<h3 style='color: #00ffff; border-bottom: 3px solid #00d4ff; padding-bottom: 10px;'>🏥 AI Specialist Recommendation</h3>", unsafe_allow_html=True)
+            st.write("Our system locates you via IP, cross-references our backend database, and uses Machine Learning to rank the best specialists based on rating, experience, proximity, and cost.")
+
+            if "top_docs_df" not in st.session_state:
+                st.session_state.top_docs_df = None
+            if "detected_city" not in st.session_state:
+                st.session_state.detected_city = None
+
+            # ✅ FIXED: unique key for this button
+            if st.button("📍 Detect Location & Run ML Recommendation Engine", key="doctor_loc_btn_unique", use_container_width=True):
+                with st.spinner("Acquiring GPS/IP coordinates and calculating match scores..."):
+                    detected_city = get_user_location()
+                    
+                    if detected_city in MOCK_DOCTORS:
+                        st.session_state.detected_city = detected_city
+                        available_docs = MOCK_DOCTORS[detected_city].get(st.session_state.selected_disease, [])
+                        
+                        if available_docs:
+                            st.session_state.top_docs_df = rank_doctors(available_docs, top_n=3)
+                            st.success(f"✅ Location verified: **{detected_city}**. Algorithm successfully ranked the top {len(st.session_state.top_docs_df)} specialists.")
+                        else:
+                            st.warning(f"Location verified as {detected_city}, but no specialists for {st.session_state.selected_disease} are available in this region yet.")
+                            st.session_state.top_docs_df = None
+                    else:
+                        st.error(f"📍 Location detected as **{detected_city}**, but it is outside our current database coverage (Mumbai, Kolkata, Delhi, New York, Pune).")
+                        st.session_state.top_docs_df = None
+
+            if st.session_state.top_docs_df is not None:
+                currency_sym = "$" if st.session_state.detected_city == "New York" else "₹"
+                
+                for index, doc in st.session_state.top_docs_df.iterrows():
+                    st.markdown(f"""
+                    <div style='background: linear-gradient(135deg, #1a2744 0%, #0f172a 100%); padding: 15px; border-radius: 10px; border-left: 4px solid #4ade80; margin-bottom: 15px;'>
+                        <div style='display: flex; justify-content: space-between; align-items: center;'>
+                            <h4 style='color: #e0f2fe; margin: 0;'>{doc['name']}</h4>
+                            <span style='background-color: #134e4a; color: #4ade80; padding: 5px 10px; border-radius: 20px; font-weight: bold; font-size: 0.9em;'>
+                                {doc['match_pct']}% Match
+                            </span>
+                        </div>
+                        <p style='color: #cbd5e1; margin: 10px 0 0 0; font-size: 0.9em;'>
+                            ⭐ {doc['rating']} | 💼 {doc['exp_yrs']} Yrs Exp | 💰 {currency_sym}{doc['fee']} | 📍 {doc['dist_km']} km
+                        </p>
+                        <p style='color: #94a3b8; margin: 5px 0 0 0; font-size: 0.85em;'>
+                            🏥 {doc['address']} ⏱️ {doc['time']}
+                        </p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.markdown("#### 📧 Send Report to Patient")
+                user_email = st.text_input("Enter Patient Email Address:", key="email_input")
+                
+                if user_email:
+                    # ✅ FIXED: unique key for this button
+                    if st.button("Send Clinical Report & Referrals", type="primary", key="send_email_btn_unique"):
+                        with st.spinner("Connecting to secure mail server..."):
+                            success = send_gmail_report(
+                                user_email, 
+                                st.session_state.top_docs_df, 
+                                st.session_state.selected_disease, 
+                                st.session_state.patient_id,
+                                st.session_state.detected_city
+                            )
+                            if success:
+                                st.balloons()
+                                st.success(f"Report successfully dispatched to {user_email}!")
+                            else:
+                                st.error("Failed to send email. Check your SMTP credentials and App Password.")
 
 # ==========================================
 # 🟢 PAGE 2: PATIENT HISTORY TRACKER
@@ -1034,7 +1281,7 @@ elif page == "📖 Clinical Reference":
         st.markdown("""
         <div style='background: linear-gradient(135deg, #7f1d1d 0%, #4c0519 100%); 
                     padding: 20px; border-radius: 12px; border-left: 5px solid #ff6b6b;'>
-            <h4 style='color: #fecaca; margin-top: 0;'>⚠️ At-Risk Ranges</h4>
+            <h4 style='color: #fecaca; margin: 0;'>⚠️ At-Risk Ranges</h4>
             <ul style='color: #fed7aa; margin: 0;'>
                 <li>Systolic BP: ≥ 140 mmHg</li>
                 <li>BMI: ≥ 30</li>
